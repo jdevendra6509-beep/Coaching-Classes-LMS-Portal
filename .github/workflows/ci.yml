@@ -31,3 +31,5 @@ jobs:
       - run: pnpm --filter @lms/api build
       # Recreates lms_test from the migrations, applies RLS, then runs unit + e2e suites.
       - run: pnpm --filter @lms/api test
+      - run: pnpm --filter @lms/web typecheck
+      - run: pnpm --filter @lms/web build

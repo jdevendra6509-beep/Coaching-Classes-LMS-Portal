@@ -1,4 +1,5 @@
 // Usage: PLATFORM_ADMIN_EMAIL=you@x.in PLATFORM_ADMIN_NAME="You" PLATFORM_ADMIN_PASSWORD=... node dist/scripts/create-platform-admin.js
+import "../config/load-env.js";
 import { createPrismaClient, UserStatus } from "@lms/db";
 import { hashPassword } from "../auth/password.js";
 

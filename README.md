@@ -6,27 +6,38 @@ teachers, courses, attendance, LMS content, fees & full accounts, and certificat
 - Design and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Data model: [packages/db/prisma/schema.prisma](packages/db/prisma/schema.prisma)
 - API: [apps/api](apps/api) (NestJS 12, ESM). OpenAPI UI at `/docs` outside production.
+- Web: [apps/web](apps/web) (Next.js 16, React 19, Tailwind 4). One app serves the platform site and every institute subdomain.
 
 ## Local setup
 
-Requires Node 22+, pnpm 10, Docker (or a local PostgreSQL 16+).
+Requires Node 22+, pnpm 10, and Docker (or a local PostgreSQL 16+).
 
 ```bash
 pnpm install
-cp .env.example .env                    # fill ENCRYPTION_KEY: openssl rand -base64 32
-pnpm services:up                        # Postgres, Redis, MinIO, Mailpit (UI on :8025)
-pnpm db:migrate                         # apply Prisma migrations
+cp .env.example .env                        # set ENCRYPTION_KEY: openssl rand -base64 32
+cp apps/web/.env.example apps/web/.env.local
+pnpm services:up                            # Postgres, Redis, MinIO, Mailpit (mail UI on :8025)
+pnpm db:migrate                             # Prisma migrations
 psql postgresql://lms:lms@localhost:5432/lms -f packages/db/prisma/sql/rls.sql
 
 pnpm --filter @lms/api build
-set -a; . ./.env; set +a
-PLATFORM_ADMIN_EMAIL=you@example.in PLATFORM_ADMIN_PASSWORD='a-long-password' \
-  pnpm --filter @lms/api create-platform-admin
-pnpm --filter @lms/api dev              # http://localhost:4000, docs at /docs
+pnpm --filter @lms/api seed:demo            # demo institute, people, fees, attendance
+pnpm dev                                    # API on :4000, web on :3000
 ```
 
-`*.lvh.me` resolves to 127.0.0.1, so `http://alpha.lvh.me:4000` addresses institute
-`alpha` locally. API clients can send `X-Institute-Slug: alpha` instead.
+Then open:
+
+| Site | URL | Sign in as (password `demo-password-123`) |
+|---|---|---|
+| Platform site and console | http://localhost:3000 | `platform@demo.test` |
+| Demo institute | http://demo.localhost:3000 | `admin@demo.test`, `accounts@demo.test`, `meera@demo.test` (teacher), `aarav@demo.test` (student) |
+
+Browsers resolve `*.localhost` to your machine, so every institute gets its own subdomain
+locally with no DNS setup. No Docker? Use a local PostgreSQL, set `STORAGE_DRIVER=local`
+(files on disk), and emails are logged as failed sends instead of reaching Mailpit.
+
+To create your own platform admin instead of the demo one:
+`PLATFORM_ADMIN_EMAIL=you@example.in PLATFORM_ADMIN_PASSWORD='a-long-password' pnpm --filter @lms/api create-platform-admin`.
 
 Run `rls.sql` again after any migration that adds a table (it is idempotent).
 

@@ -9,7 +9,8 @@
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
-    "create-platform-admin": "node dist/scripts/create-platform-admin.js"
+    "create-platform-admin": "node dist/scripts/create-platform-admin.js",
+    "seed:demo": "node dist/scripts/seed-demo.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

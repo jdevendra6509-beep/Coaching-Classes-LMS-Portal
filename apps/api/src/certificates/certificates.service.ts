@@ -173,6 +173,12 @@ export class CertificatesService {
     await this.storage.delete(key).catch(() => undefined);
   }
 
+  async background(iid: string, id: string) {
+    const tpl = await this.prisma.tenant(iid, (tx) => tx.certificateTemplate.findUnique({ where: { id } }));
+    if (!tpl) throw new NotFoundException();
+    return { bytes: await this.storage.getObject(tpl.backgroundKey), mime: tpl.backgroundMime };
+  }
+
   /** Renders the template with sample data (long name and course included) to check the layout. */
   async preview(iid: string, id: string): Promise<Uint8Array> {
     const tpl = await this.prisma.tenant(iid, async (tx) => {

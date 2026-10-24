@@ -9,3 +9,6 @@ coverage/
 !.env.test
 *.log
 .DS_Store
+.storage/
+*.tsbuildinfo
+next-env.d.ts

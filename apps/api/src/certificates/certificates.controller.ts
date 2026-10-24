@@ -45,6 +45,13 @@ export class CertificatesController {
     return this.certificates.deleteTemplate(iid, id, auth);
   }
 
+  /** The bare background file, for the layout editor to draw fields over. */
+  @Get("certificate-templates/:id/background")
+  async background(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string) {
+    const { bytes, mime } = await this.certificates.background(iid, id);
+    return new StreamableFile(Buffer.from(bytes), { type: mime, disposition: "inline" });
+  }
+
   /** The template filled with sample data, as a PDF, to check field positions. */
   @Get("certificate-templates/:id/preview")
   async preview(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string) {

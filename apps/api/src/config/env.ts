@@ -14,15 +14,18 @@ const schema = z.object({
     .string()
     .refine((v) => Buffer.from(v, "base64").length === 32, "must be 32 bytes, base64-encoded"),
 
-  PLATFORM_HOST: z.string().default("lvh.me"),
-  APP_URL_TEMPLATE: z.string().includes("{slug}").default("http://{slug}.lvh.me:3000"),
-  PLATFORM_URL: z.string().url().default("http://lvh.me:3000"),
+  PLATFORM_HOST: z.string().default("localhost"),
+  APP_URL_TEMPLATE: z.string().includes("{slug}").default("http://{slug}.localhost:3000"),
+  PLATFORM_URL: z.string().url().default("http://localhost:3000"),
   CORS_ORIGINS: z.string().default(""),
 
   SMTP_URL: z.string().default("smtp://localhost:1025"),
-  MAIL_FROM: z.string().default("Coaching LMS <no-reply@lvh.me>"),
+  MAIL_FROM: z.string().default("Coaching LMS <no-reply@example.com>"),
 
   // Object storage. On AWS leave endpoint and keys empty: the task's IAM role is used.
+  // STORAGE_DRIVER=local keeps files on disk for development without MinIO (refused in production).
+  STORAGE_DRIVER: z.enum(["s3", "local"]).default("s3"),
+  LOCAL_STORAGE_DIR: z.string().default(".storage"),
   S3_BUCKET: z.string().default("lms-private"),
   S3_REGION: z.string().default("ap-south-1"),
   S3_ENDPOINT: z.string().default(""),
