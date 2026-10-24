@@ -7,11 +7,13 @@ import { AuthModule } from "./auth/auth.module.js";
 import { PrismaExceptionFilter } from "./common/prisma-exception.filter.js";
 import { HealthController } from "./health/health.controller.js";
 import { InstituteModule } from "./institute/institute.module.js";
+import { LmsModule } from "./lms/lms.module.js";
 import { MailModule } from "./mail/mail.module.js";
 import { PeopleModule } from "./people/people.module.js";
 import { PlatformModule } from "./platform/platform.module.js";
 import { PortalModule } from "./portal/portal.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
+import { StorageModule } from "./storage/storage.module.js";
 import { TenantMiddleware } from "./tenancy/tenant.middleware.js";
 
 @Module({
@@ -31,6 +33,8 @@ import { TenantMiddleware } from "./tenancy/tenant.middleware.js";
     PeopleModule,
     AcademicsModule,
     PortalModule,
+    StorageModule,
+    LmsModule,
   ],
   controllers: [HealthController],
   providers: [

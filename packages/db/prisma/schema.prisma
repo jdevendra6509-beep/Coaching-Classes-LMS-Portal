@@ -469,7 +469,8 @@ model Material {
   title        String
   description  String?
   type         MaterialType
-  storageKey   String? // object key, for uploaded files
+  storageKey   String?      @unique // object key, for uploaded files
+  fileName     String? // original name, used for the download filename
   externalUrl  String? // for LINK / externally hosted video
   mimeType     String?
   sizeBytes    BigInt?

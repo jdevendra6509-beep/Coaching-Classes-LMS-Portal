@@ -38,7 +38,9 @@ pnpm --filter @lms/api test             # needs Postgres on localhost:5432 (user
 
 The suite recreates an `lms_test` database from the migrations, applies RLS, and runs
 unit tests plus end-to-end tests over HTTP: auth, tenant isolation, roles, Razorpay
-onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance. Razorpay and email are faked; the database is real.
+onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance, course files.
+Razorpay, email and object storage are faked; the database is real. The S3 URL signing
+itself is unit-tested with the real AWS SDK (offline).
 
 ## API overview
 
@@ -55,7 +57,9 @@ onboarding and webhooks, people, CSV import, courses, batches, enrollments, atte
 | Batches | `GET/POST /batches` · `GET/PATCH/DELETE /batches/:id` · `PUT /batches/:id/teachers` · `GET /batches/:id/students` · `POST /batches/:id/enrollments` |
 | Enrollments | `POST /enrollments` · `POST /enrollments/:id/drop` · `complete` · `reopen` |
 | Attendance | `GET /batches/:id/attendance` · `GET/PUT /batches/:id/attendance/:date` |
-| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` |
+| Course content | `GET /courses/:id/materials` · `POST /courses/:id/materials/upload-url` · `POST /courses/:id/materials` · `PUT /courses/:id/materials/order` · `PATCH/DELETE /materials/:id` · `GET /materials/:id/download` · `POST /courses/:id/modules` · `PUT /courses/:id/modules/order` · `PATCH/DELETE /modules/:id` |
+| Branding & storage | `GET /public/institutes/:slug` · `POST /institute/logo/upload-url` · `POST /institute/logo` · `GET /institute/storage` |
+| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` · `GET /me/courses/:id/materials` · `GET /me/materials/:id/download` |
 | Health | `GET /health` · `GET /health/ready` |
 
 ### Razorpay setup
@@ -74,3 +78,23 @@ spacing don't matter): `phone`/`mobile`, `admission no`, `dob`/`date of birth`
 `guardian email`/`parent email`, `address`, `batch` (batch name; enrolls the student).
 Admission numbers are generated (ADM-00001…) when blank. The import is all-or-nothing:
 send `dryRun: true` first to get every problem with its line number.
+
+### Course files
+Uploads go straight from the browser to storage, never through the API:
+
+1. `POST /courses/:id/materials/upload-url` with `{ fileName, mimeType, sizeBytes }` → the
+   API checks type, size and the plan's storage quota and returns `uploadUrl` + `uploadToken`.
+2. The browser `PUT`s the file to `uploadUrl` with the returned `Content-Type` header. The
+   URL is valid for 15 minutes and only for exactly that size and type.
+3. `POST /courses/:id/materials` with `{ title, uploadToken }` → the API checks the object
+   arrived and matches, then saves the material (unpublished unless `isPublished: true`).
+
+Downloads return a URL that works for 5 minutes, issued only after checking the student is
+enrolled (active or completed) and the material is published. Allowed: PDF, Word, Excel,
+PowerPoint, text/CSV, PNG/JPEG/WebP (20 MB), MP4/WebM, MP3; size cap `MAX_UPLOAD_MB`.
+
+**Bucket setup on AWS:** keep "Block all public access" on; add a CORS rule allowing `PUT`
+and `GET` from `https://*.<your-domain>` with header `Content-Type`; enable
+[GuardDuty Malware Protection for S3](https://docs.aws.amazon.com/guardduty/latest/ug/gdu-malware-protection-s3.html)
+on the bucket to scan uploads. Locally, `pnpm services:up` creates the `lms-private`
+bucket in MinIO.

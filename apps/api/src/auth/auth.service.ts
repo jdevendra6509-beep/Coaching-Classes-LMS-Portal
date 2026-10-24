@@ -269,6 +269,7 @@ export class AuthService {
   ): Promise<IssuedSession> {
     const isPlatformAdmin = !institute && user.isPlatformAdmin;
     const accessToken = await this.jwt.signAsync({
+      typ: "access",
       sub: user.id,
       sid: sessionId,
       pa: isPlatformAdmin,

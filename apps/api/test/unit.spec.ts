@@ -85,3 +85,22 @@ describe("CSV parsing", () => {
     expect(() => parseCsv('name\n"oops')).toThrow(/Unterminated/);
   });
 });
+
+describe("S3 presigned URLs (real SDK, signed offline)", async () => {
+  const { StorageService } = await import("../src/storage/storage.service.js");
+  const storage = new StorageService();
+
+  it("upload URLs sign the content type and length, so S3 refuses anything else", async () => {
+    const url = new URL(await storage.presignUpload("institutes/i/courses/c/f.pdf", "application/pdf", 1234));
+    expect(url.pathname).toBe("/lms-test/institutes/i/courses/c/f.pdf"); // path-style for MinIO
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;content-type;host");
+    expect(url.searchParams.get("X-Amz-Expires")).toBe("900");
+    expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("download URLs expire after 5 minutes and carry the filename", async () => {
+    const url = new URL(await storage.presignDownload("k.pdf", { fileName: "Notes – Unit 1.pdf" }));
+    expect(url.searchParams.get("X-Amz-Expires")).toBe("300");
+    expect(url.searchParams.get("response-content-disposition")).toBe("attachment; filename*=UTF-8''Notes%20%E2%80%93%20Unit%201.pdf");
+  });
+});

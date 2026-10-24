@@ -22,6 +22,15 @@ const schema = z.object({
   SMTP_URL: z.string().default("smtp://localhost:1025"),
   MAIL_FROM: z.string().default("Coaching LMS <no-reply@lvh.me>"),
 
+  // Object storage. On AWS leave endpoint and keys empty: the task's IAM role is used.
+  S3_BUCKET: z.string().default("lms-private"),
+  S3_REGION: z.string().default("ap-south-1"),
+  S3_ENDPOINT: z.string().default(""),
+  S3_ACCESS_KEY: z.string().default(""),
+  S3_SECRET_KEY: z.string().default(""),
+  S3_FORCE_PATH_STYLE: z.stringbool().default(false), // true for MinIO
+  MAX_UPLOAD_MB: z.coerce.number().int().min(1).default(500),
+
   RAZORPAY_KEY_ID: z.string().default(""),
   RAZORPAY_KEY_SECRET: z.string().default(""),
   RAZORPAY_WEBHOOK_SECRET: z.string().default(""),

@@ -12,6 +12,8 @@
     "create-platform-admin": "node dist/scripts/create-platform-admin.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@lms/db": "workspace:*",
     "@nestjs/common": "^12.2.0",
     "@nestjs/core": "^12.2.0",

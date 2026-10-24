@@ -112,6 +112,15 @@ describe("tokens and sessions", () => {
     expect((await ctx.http().get("/platform/institutes").set("Authorization", `Bearer ${forged}`)).status).toBe(401);
   });
 
+  it("only accepts tokens of type access, even when correctly signed", async () => {
+    const { JwtService } = await import("@nestjs/jwt");
+    const admin = await createUser(ctx.db, { platformAdmin: true });
+    const jwt = ctx.app.get(JwtService);
+    const claims = { sub: admin.id, sid: "x", pa: true, iid: null, slug: null, roles: [] };
+    expect((await ctx.http().get("/auth/me").set("Authorization", `Bearer ${await jwt.signAsync({ ...claims, typ: "upload" })}`)).status).toBe(401);
+    expect((await ctx.http().get("/auth/me").set("Authorization", `Bearer ${await jwt.signAsync(claims)}`)).status).toBe(401);
+  });
+
   it("rotates refresh tokens: the old one stops working", async () => {
     const inst = await createInstitute(ctx.db);
     const user = await createUser(ctx.db, { instituteId: inst.id, roles: [Role.STUDENT] });

@@ -20,6 +20,6 @@ import { InvitesService } from "./invites.service.js";
   ],
   controllers: [AuthController],
   providers: [AuthService, InvitesService, { provide: APP_GUARD, useClass: AuthGuard }],
-  exports: [AuthService, InvitesService],
+  exports: [AuthService, InvitesService, JwtModule],
 })
 export class AuthModule {}

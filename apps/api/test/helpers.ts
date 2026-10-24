@@ -8,6 +8,7 @@ import { hashPassword } from "../src/auth/password.js";
 import type { MailMessage } from "../src/mail/mail.service.js";
 import { MailService } from "../src/mail/mail.service.js";
 import { RazorpayService } from "../src/platform/razorpay.service.js";
+import { StorageService, type StoredObject } from "../src/storage/storage.service.js";
 import { configureApp } from "../src/setup.js";
 
 /** Real signature verification, fake network calls. */
@@ -26,6 +27,35 @@ export class FakeRazorpay extends RazorpayService {
     return { id, shortUrl: `https://rzp.io/i/${id}` };
   }
   override async cancelSubscription() {}
+}
+
+/**
+ * In-memory stand-in for S3. URLs look like presigned ones and carry the key; `put` plays the
+ * part of the browser uploading to the URL the API handed out.
+ */
+export class FakeStorage {
+  objects = new Map<string, StoredObject>();
+  deleted: string[] = [];
+  async presignUpload(key: string, contentType: string, contentLength: number) {
+    return `https://fake-s3.test/${key}?X-Amz-Signature=put&type=${encodeURIComponent(contentType)}&len=${contentLength}`;
+  }
+  async presignDownload(key: string, opts: { fileName?: string; inline?: boolean } = {}) {
+    return `https://fake-s3.test/${key}?X-Amz-Signature=get&disposition=${opts.inline ? "inline" : "attachment"}&name=${encodeURIComponent(opts.fileName ?? "")}`;
+  }
+  async head(key: string) {
+    return this.objects.get(key) ?? null;
+  }
+  async delete(key: string) {
+    this.objects.delete(key);
+    this.deleted.push(key);
+  }
+  /** Simulates the browser's PUT to an upload URL. */
+  put(uploadUrl: string, size: number, contentType: string) {
+    this.objects.set(this.keyOf(uploadUrl), { size, contentType });
+  }
+  keyOf(url: string) {
+    return decodeURIComponent(new URL(url).pathname.slice(1));
+  }
 }
 
 export class Mailbox {
@@ -50,17 +80,21 @@ export interface TestContext {
   db: PrismaClient;
   mail: Mailbox;
   razorpay: FakeRazorpay;
+  storage: FakeStorage;
   close: () => Promise<void>;
 }
 
 export async function createTestApp(): Promise<TestContext> {
   const mail = new Mailbox();
   const razorpay = new FakeRazorpay();
+  const storage = new FakeStorage();
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(MailService)
     .useValue(mail)
     .overrideProvider(RazorpayService)
     .useValue(razorpay)
+    .overrideProvider(StorageService)
+    .useValue(storage)
     .compile();
   const app = moduleRef.createNestApplication({ rawBody: true, logger: ["error"] });
   configureApp(app);
@@ -72,6 +106,7 @@ export async function createTestApp(): Promise<TestContext> {
     db,
     mail,
     razorpay,
+    storage,
     close: async () => {
       await app.close();
       await db.$disconnect();
@@ -140,4 +175,17 @@ export async function acceptInviteAndLogin(ctx: TestContext, email: string, slug
   const accept = await ctx.http().post("/auth/invite/accept").send({ token, password: PASSWORD });
   if (accept.status !== 204) throw new Error(`invite accept failed: ${accept.status}`);
   return (await login(ctx, email, slug)).token;
+}
+
+/** Runs the two-step upload: ask for a URL, "PUT" the bytes, return the ticket for confirmation. */
+export async function uploadFile(
+  ctx: TestContext,
+  headers: Record<string, string>,
+  courseId: string,
+  file: { fileName: string; mimeType: string; sizeBytes: number },
+) {
+  const res = await ctx.http().post(`/courses/${courseId}/materials/upload-url`).set(headers).send(file);
+  if (res.status !== 200) throw new Error(`upload-url failed ${res.status}: ${JSON.stringify(res.body)}`);
+  ctx.storage.put(res.body.uploadUrl, file.sizeBytes, file.mimeType);
+  return res.body.uploadToken as string;
 }

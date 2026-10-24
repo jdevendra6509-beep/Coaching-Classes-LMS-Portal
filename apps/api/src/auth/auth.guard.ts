@@ -7,6 +7,7 @@ import { IS_PUBLIC, PLATFORM_ADMIN, ROLES } from "./decorators.js";
 import { ACCESS_COOKIE } from "./cookies.js";
 
 interface AccessClaims {
+  typ: string;
   sub: string;
   sid: string;
   pa: boolean;
@@ -41,6 +42,8 @@ export class AuthGuard implements CanActivate {
     } catch {
       throw new UnauthorizedException();
     }
+    // Only access tokens authenticate; other signed tokens (e.g. upload tickets) never do.
+    if (claims.typ !== "access") throw new UnauthorizedException();
 
     // A token minted for institute A must not be replayed against institute B's host.
     if (req.tenantSlug && claims.slug !== req.tenantSlug) throw new UnauthorizedException();
