@@ -38,7 +38,7 @@ pnpm --filter @lms/api test             # needs Postgres on localhost:5432 (user
 
 The suite recreates an `lms_test` database from the migrations, applies RLS, and runs
 unit tests plus end-to-end tests over HTTP: auth, tenant isolation, roles, Razorpay
-onboarding and webhooks. Razorpay and email are faked; the database is real.
+onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance. Razorpay and email are faked; the database is real.
 
 ## API overview
 
@@ -48,7 +48,14 @@ onboarding and webhooks. Razorpay and email are faked; the database is real.
 | Public signup | `GET /plans` · `GET /signup/slug-available` · `POST /signup` |
 | Webhooks | `POST /webhooks/razorpay` (signature-verified, idempotent) |
 | Platform admin | `GET /platform/institutes[/:id]` · `POST /platform/institutes/:id/suspend` · `reactivate` · `resend-welcome` · `GET /platform/payments` · `GET/POST /platform/plans` · `PATCH /platform/plans/:id` |
-| Institute | `GET/PATCH /institute` · `GET /institute/members` |
+| Institute | `GET/PATCH /institute` · `GET /institute/members` · `POST /staff` · `POST /staff/:membershipId/deactivate` · `activate` |
+| Teachers | `GET/POST /teachers` · `GET/PATCH /teachers/:id` · `POST /teachers/:id/deactivate` · `activate` · `resend-invite` |
+| Students | `GET/POST /students` · `POST /students/import` (CSV, `dryRun`) · `GET/PATCH /students/:id` · `deactivate` · `activate` · `resend-invite` · `GET /students/:id/attendance` |
+| Courses | `GET/POST /courses` · `GET/PATCH/DELETE /courses/:id` |
+| Batches | `GET/POST /batches` · `GET/PATCH/DELETE /batches/:id` · `PUT /batches/:id/teachers` · `GET /batches/:id/students` · `POST /batches/:id/enrollments` |
+| Enrollments | `POST /enrollments` · `POST /enrollments/:id/drop` · `complete` · `reopen` |
+| Attendance | `GET /batches/:id/attendance` · `GET/PUT /batches/:id/attendance/:date` |
+| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` |
 | Health | `GET /health` · `GET /health/ready` |
 
 ### Razorpay setup
@@ -59,3 +66,11 @@ onboarding and webhooks. Razorpay and email are faked; the database is real.
    `subscription.cancelled`, `subscription.completed`, `subscription.resumed`.
 3. Create plans from the platform console (`POST /platform/plans`); the API creates the
    matching Razorpay plan with GST included.
+
+### Student CSV import
+Header row required; `name` and `email` are mandatory. Recognised columns (case and
+spacing don't matter): `phone`/`mobile`, `admission no`, `dob`/`date of birth`
+(YYYY-MM-DD), `guardian name`/`parent name`, `guardian phone`/`parent phone`,
+`guardian email`/`parent email`, `address`, `batch` (batch name; enrolls the student).
+Admission numbers are generated (ADM-00001…) when blank. The import is all-or-nothing:
+send `dryRun: true` first to get every problem with its line number.

@@ -1,13 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { AccountType, AuthTokenType, Role, UserStatus } from "@lms/db";
-import { AuthService } from "../auth/auth.service.js";
-import { instituteUrl } from "../config/env.js";
+import { Injectable } from "@nestjs/common";
+import { AccountType, Role } from "@lms/db";
+import { InvitesService } from "../auth/invites.service.js";
+import { SEQUENCE_DEFAULTS } from "../common/sequence.js";
 import type { MailMessage } from "../mail/mail.service.js";
-import { MailService } from "../mail/mail.service.js";
-import { accessGrantedEmail, inviteEmail } from "../mail/templates.js";
-import { PrismaService, type Tx } from "../prisma/prisma.service.js";
-
-const INVITE_TTL_SECONDS = 7 * 86_400;
+import type { Tx } from "../prisma/prisma.service.js";
 
 /** Accounts every institute starts with; the posting rules for fees and bills depend on the system ones. */
 export const DEFAULT_ACCOUNTS: { code: string; name: string; type: AccountType }[] = [
@@ -26,21 +22,9 @@ export const DEFAULT_ACCOUNTS: { code: string; name: string; type: AccountType }
   { code: "5900", name: "Other Expenses", type: AccountType.EXPENSE },
 ];
 
-const DEFAULT_SEQUENCES = [
-  { type: "INVOICE", prefix: "INV-" },
-  { type: "RECEIPT", prefix: "RCT-" },
-  { type: "CERTIFICATE", prefix: "CERT-" },
-];
-
 @Injectable()
 export class ProvisioningService {
-  private readonly logger = new Logger(ProvisioningService.name);
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly auth: AuthService,
-    private readonly mail: MailService,
-  ) {}
+  constructor(private readonly invites: InvitesService) {}
 
   /** Seeds institute defaults. Idempotent, so it is safe to run again for an existing institute. */
   async seedInstitute(tx: Tx, instituteId: string): Promise<void> {
@@ -49,16 +33,12 @@ export class ProvisioningService {
       skipDuplicates: true,
     });
     await tx.documentSequence.createMany({
-      data: DEFAULT_SEQUENCES.map((s) => ({ ...s, instituteId })),
+      data: Object.entries(SEQUENCE_DEFAULTS).map(([type, prefix]) => ({ type, prefix, instituteId })),
       skipDuplicates: true,
     });
   }
 
-  /**
-   * Builds the welcome emails for the institute's admins: a set-password link for invited
-   * users, a plain "you have access" note for people who already have an account.
-   * Returned rather than sent so the caller can send them after its transaction commits.
-   */
+  /** Welcome emails for the institute's admins, to send after the caller's transaction commits. */
   async welcomeAdmins(tx: Tx, instituteId: string): Promise<MailMessage[]> {
     const institute = await tx.institute.findUniqueOrThrow({ where: { id: instituteId } });
     const admins = await tx.membership.findMany({
@@ -66,22 +46,11 @@ export class ProvisioningService {
       include: { user: true },
     });
     const messages: MailMessage[] = [];
-    for (const { user } of admins) {
-      if (user.status === UserStatus.INVITED) {
-        const token = await this.auth.issueEmailToken(tx, user.id, AuthTokenType.INVITE, INVITE_TTL_SECONDS);
-        const link = instituteUrl(institute.slug, `/accept-invite?token=${token}`);
-        messages.push(inviteEmail(user.email, user.name, institute.name, link));
-      } else {
-        messages.push(accessGrantedEmail(user.email, user.name, institute.name, instituteUrl(institute.slug, "/login")));
-      }
-    }
+    for (const { user } of admins) messages.push(await this.invites.welcomeMessage(tx, institute, user)); // sequential: one connection
     return messages;
   }
 
-  /** Best effort: a failed email is logged and can be re-sent from the platform console. */
-  async sendAll(messages: MailMessage[]): Promise<void> {
-    for (const m of messages) {
-      await this.mail.send(m).catch(() => this.logger.warn(`Welcome email to institute admin not sent`));
-    }
+  sendAll(messages: MailMessage[]): Promise<void> {
+    return this.invites.sendAll(messages);
   }
 }

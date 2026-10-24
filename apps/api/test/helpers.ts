@@ -124,3 +124,20 @@ export function signWebhook(body: object, secret = process.env.RAZORPAY_WEBHOOK_
   const raw = JSON.stringify(body);
   return { raw, signature: createHmac("sha256", secret).update(raw).digest("hex") };
 }
+
+/** An active institute with a signed-in admin. `as(token)` builds the auth header. */
+export async function setupInstitute(ctx: TestContext) {
+  const inst = await createInstitute(ctx.db);
+  const admin = await createUser(ctx.db, { instituteId: inst.id, roles: ["INSTITUTE_ADMIN"] });
+  const { token } = await login(ctx, admin.email, inst.slug);
+  const authed = (t = token) => ({ Authorization: `Bearer ${t}`, "X-Institute-Slug": inst.slug });
+  return { inst, admin, token, authed };
+}
+
+/** Accepts the latest invite sent to `email` and signs in, returning a bearer token. */
+export async function acceptInviteAndLogin(ctx: TestContext, email: string, slug: string) {
+  const token = ctx.mail.tokenFor(email);
+  const accept = await ctx.http().post("/auth/invite/accept").send({ token, password: PASSWORD });
+  if (accept.status !== 204) throw new Error(`invite accept failed: ${accept.status}`);
+  return (await login(ctx, email, slug)).token;
+}

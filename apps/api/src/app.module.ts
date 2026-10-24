@@ -1,12 +1,16 @@
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
-import { APP_GUARD } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { AcademicsModule } from "./academics/academics.module.js";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
+import { PrismaExceptionFilter } from "./common/prisma-exception.filter.js";
 import { HealthController } from "./health/health.controller.js";
 import { InstituteModule } from "./institute/institute.module.js";
 import { MailModule } from "./mail/mail.module.js";
+import { PeopleModule } from "./people/people.module.js";
 import { PlatformModule } from "./platform/platform.module.js";
+import { PortalModule } from "./portal/portal.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
 import { TenantMiddleware } from "./tenancy/tenant.middleware.js";
 
@@ -24,9 +28,15 @@ import { TenantMiddleware } from "./tenancy/tenant.middleware.js";
     AuthModule,
     PlatformModule,
     InstituteModule,
+    PeopleModule,
+    AcademicsModule,
+    PortalModule,
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_FILTER, useClass: PrismaExceptionFilter },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

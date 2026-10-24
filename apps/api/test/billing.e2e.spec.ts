@@ -93,7 +93,7 @@ describe("institute onboarding", () => {
     expect(after.platformPayments[0].amount.toFixed(2)).toBe("999.00");
     expect(after.platformPayments[0].gstAmount.toFixed(2)).toBe("179.82");
     expect(after.accounts.length).toBeGreaterThanOrEqual(13);
-    expect(after.documentSequences.map((s) => s.type).sort()).toEqual(["CERTIFICATE", "INVOICE", "RECEIPT"]);
+    expect(after.documentSequences.map((s) => s.type).sort()).toEqual(["ADMISSION", "CERTIFICATE", "INVOICE", "RECEIPT"]);
 
     // The welcome email carries a set-password link on the institute's own subdomain.
     expect(ctx.mail.last(email)!.text).toContain(`http://${slug}.lvh.me:3000/accept-invite?token=`);

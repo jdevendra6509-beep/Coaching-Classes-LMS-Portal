@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { AuthController } from "./auth.controller.js";
 import { AuthGuard } from "./auth.guard.js";
 import { AuthService } from "./auth.service.js";
+import { InvitesService } from "./invites.service.js";
 
 @Global()
 @Module({
@@ -18,7 +19,7 @@ import { AuthService } from "./auth.service.js";
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, { provide: APP_GUARD, useClass: AuthGuard }],
-  exports: [AuthService],
+  providers: [AuthService, InvitesService, { provide: APP_GUARD, useClass: AuthGuard }],
+  exports: [AuthService, InvitesService],
 })
 export class AuthModule {}

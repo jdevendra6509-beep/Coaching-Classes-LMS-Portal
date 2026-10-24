@@ -1,3 +1,4 @@
+import { parseCsv } from "../src/common/csv.js";
 import { decrypt, encrypt } from "../src/common/crypto.js";
 import { totpCode, verifyTotp } from "../src/auth/totp.js";
 import { chargeAmountPaise, splitGst } from "../src/platform/money.js";
@@ -66,5 +67,21 @@ describe("tenant slug resolution", () => {
 
   it("prefers the header the web app forwards", () => {
     expect(resolveSlug(req("api.lvh.me", "Beta"))).toBe("beta");
+  });
+});
+
+describe("CSV parsing", () => {
+  it("handles quotes, embedded commas/newlines, CRLF, a BOM and blank lines", () => {
+    const csv = '﻿Name,Email,Address\r\n"Rao, Asha",asha@x.in,"Flat 2\nPune"\r\n\r\nRavi,"ravi@x.in",""" quoted """\r\n';
+    const { headers, rows } = parseCsv(csv);
+    expect(headers).toEqual(["name", "email", "address"]);
+    expect(rows).toEqual([
+      { name: "Rao, Asha", email: "asha@x.in", address: "Flat 2\nPune" },
+      { name: "Ravi", email: "ravi@x.in", address: '" quoted "' },
+    ]);
+  });
+
+  it("rejects an unterminated quote", () => {
+    expect(() => parseCsv('name\n"oops')).toThrow(/Unterminated/);
   });
 });
