@@ -141,7 +141,7 @@ privacy lawyer before onboarding paying institutes.
 | **M2 Institute core** ✅ backend | Profile, staff, teachers, students (CSV import), courses, batches, enrollments, attendance, student portal views. Remaining: logo upload (comes with file storage in M3), UI. |
 | **M3 LMS** ✅ backend | Direct-to-S3 uploads with signed tickets, modules and ordering, publish/unpublish, links and videos, short-lived download links for enrolled students, storage quota, institute logo. Remaining: malware scanning (bucket setting), video provider, UI. |
 | **M4 Fees & accounts** ✅ backend | Invoices with discounts, GST and instalments, receipts and reversals, AP (vendors, bills), double-entry ledger with DB-enforced balance and append-only journals, trial balance, P&L, balance sheet, account ledger, AR/AP ageing, collections. Remaining: CGST/SGST split, period locking, PDFs, UI. |
-| **M5 Certificates** | Template editor, completion + fee gating, PDF generation, email, verification page. |
+| **M5 Certificates** ✅ backend | Templates on uploaded PDF/image backgrounds with mapped fields and preview, automatic issue on completion + fees paid, PDF emailed to student and guardian, public QR verification, revocation; invoice and receipt PDFs. Remaining: drag-and-drop editor UI, custom fonts for Indian scripts. |
 | **M6 Hardening & launch** | Tenant-isolation and e2e tests, load test, backups/restore drill, Terraform for AWS Mumbai, monitoring (Sentry + CloudWatch). |
 
 ## 8. Decisions

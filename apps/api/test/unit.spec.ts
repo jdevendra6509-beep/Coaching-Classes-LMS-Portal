@@ -148,3 +148,33 @@ describe("invoice maths", async () => {
     expect(rupeesInWords(0.05)).toBe("Rupees Zero and Five Paise Only");
   });
 });
+
+describe("PDF text helpers", async () => {
+  const { inr, formatDate, drawable } = await import("../src/pdf/text.js");
+  const { fillText } = await import("../src/pdf/certificate.js");
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+
+  it("groups rupees the Indian way", () => {
+    expect(inr("125000.5")).toBe("1,25,000.50");
+    expect(inr(999)).toBe("999.00");
+    expect(inr(12345678)).toBe("1,23,45,678.00");
+  });
+
+  it("formats dates", () => {
+    const d = new Date("2026-03-05T00:00:00Z");
+    expect(formatDate(d)).toBe("5 March 2026");
+    expect(formatDate(d, "DD/MM/YYYY")).toBe("05/03/2026");
+    expect(formatDate(d, "MMMM D, YYYY")).toBe("March 5, 2026");
+  });
+
+  it("fills placeholders and leaves unknown ones alone", () => {
+    const v = { courseName: "NEET", completionDate: "2026-03-05" } as never;
+    expect(fillText("completed {courseName} on {completionDate} {nope}", v)).toBe("completed NEET on 5 March 2026 {nope}");
+  });
+
+  it("folds accents and drops characters the standard fonts can't draw", async () => {
+    const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica);
+    expect(drawable(font, "Zoë Ångström")).toBe("Zoe Angstrom");
+    expect(drawable(font, "Riya रिया Sen")).toBe("Riya  Sen");
+  });
+});

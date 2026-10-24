@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { DiscountType, EnrollmentStatus, InvoiceStatus, type Prisma, Role } from "@lms/db";
 import { startOfToday } from "../academics/enroll.js";
 import { AuditService } from "../audit/audit.service.js";
+import { CertificatesService } from "../certificates/certificates.service.js";
 import { actorMembership, actorStudent } from "../common/actor.js";
 import type { AuthContext } from "../common/request.js";
 import { nextDocumentNumber } from "../common/sequence.js";
 import { MailService } from "../mail/mail.service.js";
+import { invoicePdf, receiptPdf } from "../pdf/documents.js";
 import { toDate } from "../people/people.service.js";
 import { PrismaService, type Tx } from "../prisma/prisma.service.js";
 import type { ApplyDiscountDto, CreateInvoiceDto, EnrollmentInvoiceDto, InvoicesQuery, PaymentsQuery, RecordPaymentDto } from "./dto.js";
@@ -76,6 +78,7 @@ export class InvoicesService {
     private readonly ledger: LedgerService,
     private readonly audit: AuditService,
     private readonly mail: MailService,
+    private readonly certificates: CertificatesService,
   ) {}
 
   // ── creating ──
@@ -349,9 +352,12 @@ export class InvoicesService {
       const paid = D(inv.amountPaid).add(amount);
       await tx.studentInvoice.update({ where: { id: invoiceId }, data: { amountPaid: paid, status: statusFor(inv.total, paid) } });
       await this.audit.record({ action: "payment.record", entityType: "StudentPayment", entityId: payment.id, instituteId: iid, actorUserId: auth.userId, metadata: { amount: amount.toFixed(2), method: dto.method } }, tx);
-      return { paymentId: payment.id, receipt: await this.receiptData(tx, payment.id) };
+      const enrollmentId = paid.gte(D(inv.total)) ? inv.enrollmentId : null;
+      return { paymentId: payment.id, receipt: await this.receiptData(tx, payment.id), enrollmentId };
     });
     if (dto.sendReceipt !== false) await this.emailReceipt(result.receipt);
+    // The final payment may be what releases a certificate for an already-completed course.
+    if (result.enrollmentId) await this.certificates.afterTrigger(iid, result.enrollmentId, auth.userId);
     return result.receipt;
   }
 
@@ -448,9 +454,57 @@ export class InvoicesService {
       `${r.reference ? `, reference ${r.reference}` : ""}, against invoice ${r.invoice.number}.\n\n` +
       `Receipt no: ${r.receiptNo}\nDate: ${r.receivedAt.toISOString().slice(0, 10)}\nBalance due on this invoice: ${r.invoice.balance}\n\n` +
       `${r.institute.name}`;
+    const pdf = Buffer.from(await receiptPdf(r));
     for (const to of new Set([r.student.email, r.student.guardianEmail].filter((e): e is string => !!e))) {
-      await this.mail.send({ to, subject: `Fee receipt ${r.receiptNo} - ${r.institute.name}`, text }).catch(() => this.logger.warn("Receipt email not sent"));
+      await this.mail
+        .send({ to, subject: `Fee receipt ${r.receiptNo} - ${r.institute.name}`, text, attachments: [{ filename: `${r.receiptNo}.pdf`, content: pdf, contentType: "application/pdf" }] })
+        .catch(() => this.logger.warn("Receipt email not sent"));
     }
+  }
+
+  // ── PDFs ──
+
+  /** Staff, or the invoice's own student when `student` is given. Drafts have no PDF. */
+  invoicePdf(iid: string, id: string, student?: AuthContext): Promise<Uint8Array> {
+    return this.prisma.tenant(iid, async (tx) => {
+      const inv = await tx.studentInvoice.findUnique({ where: { id }, select: INVOICE_VIEW });
+      if (!inv) throw new NotFoundException();
+      if (student && inv.student.id !== (await actorStudent(tx, student)).id) throw new NotFoundException();
+      if (inv.status === InvoiceStatus.DRAFT) throw new BadRequestException("Drafts have no PDF; issue the invoice first");
+      const institute = await this.instituteHeader(tx, iid);
+      const v = invoiceView(inv);
+      const money = (x: MoneyValue) => D(x).toFixed(2);
+      return invoicePdf({
+        number: v.number,
+        status: v.status,
+        issueDate: v.issueDate,
+        dueDate: v.dueDate,
+        subtotal: money(v.subtotal),
+        discountTotal: money(v.discountTotal),
+        taxTotal: money(v.taxTotal),
+        total: money(v.total),
+        amountPaid: money(v.amountPaid),
+        outstanding: v.outstanding,
+        notes: v.notes,
+        institute,
+        student: { name: v.student.membership.user.name, admissionNo: v.student.admissionNo, email: v.student.membership.user.email },
+        lines: v.lines.map((l) => ({ ...l, unitPrice: money(l.unitPrice), taxRate: money(l.taxRate), amount: money(l.amount) })),
+        discounts: v.discounts.map((d) => ({ description: d.description, amount: money(d.amount) })),
+        installments: v.installments.map((i) => ({ dueDate: i.dueDate, amount: money(i.amount) })),
+      });
+    });
+  }
+
+  async receiptPdf(iid: string, paymentId: string, student?: AuthContext): Promise<Uint8Array> {
+    const r = student ? await this.myReceipt(iid, paymentId, student) : await this.receipt(iid, paymentId);
+    return receiptPdf(r);
+  }
+
+  private instituteHeader(tx: Tx, iid: string) {
+    return tx.institute.findUniqueOrThrow({
+      where: { id: iid },
+      select: { name: true, legalName: true, gstin: true, address: true, city: true, state: true, pincode: true, phone: true, email: true },
+    });
   }
 
   private async lock(tx: Tx, id: string) {
@@ -458,18 +512,4 @@ export class InvoicesService {
     if (!rows.length) throw new NotFoundException("Invoice not found");
     return tx.studentInvoice.findUniqueOrThrow({ where: { id } });
   }
-}
-
-/**
- * The fee half of the certificate rule. True when every issued invoice for the enrollment is
- * fully paid and nothing is left as a draft. A course with a fee must have been billed: an
- * unbilled paid course is treated as not cleared, so a forgotten invoice can't release a
- * certificate. Free courses (fee 0) are cleared without an invoice.
- */
-export async function enrollmentFeesCleared(tx: Tx, enrollmentId: string): Promise<boolean> {
-  const e = await tx.enrollment.findUnique({ where: { id: enrollmentId }, include: { course: { select: { fee: true } } } });
-  if (!e) return false;
-  const invoices = await tx.studentInvoice.findMany({ where: { enrollmentId, status: { not: InvoiceStatus.VOID } }, select: { status: true } });
-  if (!invoices.length) return D(e.course.fee).isZero();
-  return invoices.every((i) => i.status === InvoiceStatus.PAID);
 }

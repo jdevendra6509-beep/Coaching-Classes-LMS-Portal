@@ -3,6 +3,7 @@ import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { AcademicsModule } from "./academics/academics.module.js";
 import { AuditModule } from "./audit/audit.module.js";
+import { CertificatesModule } from "./certificates/certificates.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { PrismaExceptionFilter } from "./common/prisma-exception.filter.js";
 import { HealthController } from "./health/health.controller.js";
@@ -37,6 +38,7 @@ import { TenantMiddleware } from "./tenancy/tenant.middleware.js";
     StorageModule,
     LmsModule,
     FinanceModule,
+    CertificatesModule,
   ],
   controllers: [HealthController],
   providers: [

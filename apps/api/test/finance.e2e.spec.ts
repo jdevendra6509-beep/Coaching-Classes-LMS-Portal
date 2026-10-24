@@ -1,5 +1,5 @@
 import { Role } from "@lms/db";
-import { enrollmentFeesCleared } from "../src/finance/invoices.service.js";
+import { enrollmentFeesCleared } from "../src/finance/fees-cleared.js";
 import { PrismaService } from "../src/prisma/prisma.service.js";
 import { acceptInviteAndLogin, createTestApp, createUser, login, setupInstitute, unique, type TestContext } from "./helpers.js";
 

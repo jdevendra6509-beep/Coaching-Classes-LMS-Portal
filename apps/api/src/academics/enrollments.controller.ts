@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post } from "@nestjs/common";
 import { EnrollmentStatus, Role } from "@lms/db";
 import { AuditService } from "../audit/audit.service.js";
+import { CertificatesService } from "../certificates/certificates.service.js";
 import { Auth, InstituteId, Roles } from "../auth/decorators.js";
 import { actorMembership, assertBatchAccess } from "../common/actor.js";
 import type { AuthContext } from "../common/request.js";
@@ -14,6 +15,7 @@ export class EnrollmentsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly certificates: CertificatesService,
   ) {}
 
   @Post()
@@ -40,8 +42,8 @@ export class EnrollmentsController {
   @Roles(Role.INSTITUTE_ADMIN, Role.TEACHER)
   @Post(":id/complete")
   @HttpCode(200)
-  complete(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string, @Auth() auth: AuthContext) {
-    return this.transition(iid, id, auth, "complete", EnrollmentStatus.ACTIVE, async (tx, batchId) => {
+  async complete(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string, @Auth() auth: AuthContext) {
+    const enrollment = await this.transition(iid, id, auth, "complete", EnrollmentStatus.ACTIVE, async (tx, batchId) => {
       await assertBatchAccess(tx, auth, batchId);
       const by = await actorMembership(tx, auth, [Role.TEACHER, Role.INSTITUTE_ADMIN]);
       return tx.enrollment.update({
@@ -49,6 +51,8 @@ export class EnrollmentsController {
         data: { status: EnrollmentStatus.COMPLETED, completedAt: new Date(), completedById: by.id },
       });
     });
+    // Issues the certificate straight away when fees are already paid; otherwise the final payment will.
+    return { ...enrollment, certificate: await this.certificates.afterTrigger(iid, id, auth.userId) };
   }
 
   /** Undo a completion marked by mistake. */

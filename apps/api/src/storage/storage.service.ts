@@ -60,6 +60,18 @@ export class StorageService {
     }
   }
 
+  /** Server-side write, for files the API generates itself (certificate PDFs). */
+  async putObject(key: string, body: Uint8Array, contentType: string): Promise<void> {
+    await this.s3.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }));
+  }
+
+  /** Server-side read, e.g. a certificate template background to draw on. */
+  async getObject(key: string): Promise<Uint8Array> {
+    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!res.Body) throw new Error(`Empty object ${key}`);
+    return res.Body.transformToByteArray();
+  }
+
   async delete(key: string): Promise<void> {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }

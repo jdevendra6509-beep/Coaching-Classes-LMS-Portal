@@ -47,11 +47,24 @@ export class FakeStorage {
   }
   async delete(key: string) {
     this.objects.delete(key);
+    this.bodies.delete(key);
     this.deleted.push(key);
   }
-  /** Simulates the browser's PUT to an upload URL. */
-  put(uploadUrl: string, size: number, contentType: string) {
-    this.objects.set(this.keyOf(uploadUrl), { size, contentType });
+  bodies = new Map<string, Uint8Array>();
+  /** Simulates the browser's PUT to an upload URL (optionally with real bytes). */
+  put(uploadUrl: string, size: number, contentType: string, body?: Uint8Array) {
+    const key = this.keyOf(uploadUrl);
+    this.objects.set(key, { size, contentType });
+    if (body) this.bodies.set(key, body);
+  }
+  async putObject(key: string, body: Uint8Array, contentType: string) {
+    this.objects.set(key, { size: body.length, contentType });
+    this.bodies.set(key, body);
+  }
+  async getObject(key: string) {
+    const body = this.bodies.get(key);
+    if (!body) throw new Error(`NoSuchKey ${key}`);
+    return body;
   }
   keyOf(url: string) {
     return decodeURIComponent(new URL(url).pathname.slice(1));

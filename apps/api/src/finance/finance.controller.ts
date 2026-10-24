@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, StreamableFile } from "@nestjs/common";
 import { Role } from "@lms/db";
 import { AuditService } from "../audit/audit.service.js";
 import { Auth, InstituteId, Roles } from "../auth/decorators.js";
@@ -17,6 +17,9 @@ import { PayablesService } from "./payables.service.js";
 import { ReportsService } from "./reports.service.js";
 
 const FINANCE = [Role.INSTITUTE_ADMIN, Role.ACCOUNTANT];
+
+const pdfFile = (bytes: Uint8Array, name: string) =>
+  new StreamableFile(Buffer.from(bytes), { type: "application/pdf", disposition: `inline; filename="${name}.pdf"` });
 
 @Roles(...FINANCE)
 @Controller()
@@ -51,6 +54,16 @@ export class FinanceController {
   @Get("invoices/:id")
   getInvoice(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string) {
     return this.invoices.get(iid, id);
+  }
+
+  @Get("invoices/:id/pdf")
+  async invoicePdf(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string) {
+    return pdfFile(await this.invoices.invoicePdf(iid, id), "invoice");
+  }
+
+  @Get("payments/:id/receipt.pdf")
+  async receiptPdf(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string) {
+    return pdfFile(await this.invoices.receiptPdf(iid, id), "receipt");
   }
 
   @Post("invoices/:id/issue")
@@ -262,5 +275,15 @@ export class StudentFeesController {
   @Get("payments/:id/receipt")
   receipt(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string, @Auth() auth: AuthContext) {
     return this.invoices.myReceipt(iid, id, auth);
+  }
+
+  @Get("payments/:id/receipt.pdf")
+  async receiptPdf(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string, @Auth() auth: AuthContext) {
+    return pdfFile(await this.invoices.receiptPdf(iid, id, auth), "receipt");
+  }
+
+  @Get("invoices/:id/pdf")
+  async invoicePdf(@InstituteId() iid: string, @Param("id", ParseUUIDPipe) id: string, @Auth() auth: AuthContext) {
+    return pdfFile(await this.invoices.invoicePdf(iid, id, auth), "invoice");
   }
 }

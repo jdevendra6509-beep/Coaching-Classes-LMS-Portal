@@ -38,7 +38,7 @@ pnpm --filter @lms/api test             # needs Postgres on localhost:5432 (user
 
 The suite recreates an `lms_test` database from the migrations, applies RLS, and runs
 unit tests plus end-to-end tests over HTTP: auth, tenant isolation, roles, Razorpay
-onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance, course files, fees and accounts.
+onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance, course files, fees and accounts, certificates and PDFs.
 Razorpay, email and object storage are faked; the database is real. The S3 URL signing
 itself is unit-tested with the real AWS SDK (offline).
 
@@ -63,7 +63,9 @@ itself is unit-tested with the real AWS SDK (offline).
 | Payables (AP) | `GET/POST /vendors` · `PATCH /vendors/:id` · `GET/POST /bills` · `GET /bills/:id` · `POST /bills/:id/payments` · `POST /bills/:id/void` |
 | Ledger | `GET/POST /accounts` · `PATCH /accounts/:id` · `GET /accounts/:id/ledger` · `GET/POST /journals` · `POST /journals/:id/reverse` |
 | Reports | `GET /reports/trial-balance` · `profit-and-loss` · `balance-sheet` · `receivables-ageing` · `payables-ageing` · `collections` |
-| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` · `GET /me/courses/:id/materials` · `GET /me/materials/:id/download` · `GET /me/fees` · `GET /me/payments/:id/receipt` |
+| Certificates | `POST /certificate-templates/upload-url` · `GET/POST /certificate-templates` · `GET/PATCH/DELETE /certificate-templates/:id` · `GET /certificate-templates/:id/preview` · `PUT /courses/:id/certificate-template` · `GET /enrollments/:id/certificate-status` · `POST /enrollments/:id/certificate` · `GET /certificates` · `GET /certificates/:id/download` · `POST /certificates/:id/resend` · `revoke` · `GET /public/certificates/:code` |
+| PDFs | `GET /invoices/:id/pdf` · `GET /payments/:id/receipt.pdf` |
+| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` · `GET /me/courses/:id/materials` · `GET /me/materials/:id/download` · `GET /me/fees` · `GET /me/payments/:id/receipt[.pdf]` · `GET /me/invoices/:id/pdf` · `GET /me/certificates` · `GET /me/certificates/:id/download` |
 | Health | `GET /health` · `GET /health/ready` |
 
 ### Razorpay setup
@@ -119,5 +121,36 @@ every entry must balance at commit, and the app's database role has no UPDATE/DE
 journal tables. Invoice, receipt and admission numbers are gap-free per institute.
 Discounts reduce the taxable value before GST. Instalment plans age by their own due dates.
 
+Receipts and invoices are also available as PDFs; the receipt PDF is attached to the receipt email.
+
 Not yet: CGST/SGST vs IGST split on invoices, period locking (closing a month), online fee
-collection, PDF invoices/receipts (they come with the certificate PDF renderer).
+collection.
+
+### Certificates
+1. Upload a background design (PDF, PNG or JPEG) via `POST /certificate-templates/upload-url`
+   and create the template with its fields. Check the layout with `GET …/preview`, which
+   fills it with deliberately long sample values.
+2. Assign it to a course: `PUT /courses/:id/certificate-template`.
+3. A certificate is issued automatically the moment **both** hold: the teacher has marked the
+   enrollment complete, and every invoice for that enrollment is paid in full (a course with a
+   fee must have been invoiced). Whichever happens last triggers it. The PDF is emailed to the
+   student and guardian; `GET /enrollments/:id/certificate-status` explains what's missing.
+
+Each field is either a value (`key`) or fixed text with placeholders (`text`):
+
+```json
+{ "key": "studentName", "x": 421, "y": 280, "fontSize": 32, "font": "Times-Bold", "align": "center", "maxWidth": 600 }
+{ "text": "has completed {courseName} on {completionDate}", "x": 421, "y": 330, "dateFormat": "D MMMM YYYY", "align": "center" }
+{ "key": "verificationQr", "x": 720, "y": 460, "size": 90 }
+```
+
+Keys: `studentName`, `admissionNo`, `courseName`, `courseCode`, `batchName`, `durationWeeks`,
+`completionDate`, `issueDate`, `serialNo`, `instituteName`, `teacherName`, `verificationUrl`,
+`verificationCode`, `verificationQr`. Coordinates are PDF points from the top-left corner
+(A4 landscape is 842 × 595); `y` is the text baseline, or the QR code's top edge. Fonts:
+Helvetica, Times and Courier families. Text shrinks to `maxWidth` for long names.
+
+What's printed is frozen at issue time; `GET /public/certificates/:code` (behind the QR code)
+confirms a certificate is genuine and not revoked. Issued certificates can't be "un-completed";
+revoke them instead. The standard PDF fonts cover Latin script only: accents are folded and
+other scripts (e.g. Devanagari) are left out until custom fonts are supported.

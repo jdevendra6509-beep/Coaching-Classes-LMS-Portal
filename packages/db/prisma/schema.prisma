@@ -786,15 +786,16 @@ model DocumentSequence {
 //    { "key": "courseName", ... }, { "key": "completionDate", "format": "dd MMM yyyy" },
 //    { "key": "serialNo" }, { "key": "verificationQr", "size": 80 }]
 model CertificateTemplate {
-  id            String   @id @default(uuid()) @db.Uuid
-  instituteId   String   @db.Uuid
-  name          String
-  backgroundKey String
-  pageWidth     Float // PDF points
-  pageHeight    Float
-  fields        Json
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(uuid()) @db.Uuid
+  instituteId    String   @db.Uuid
+  name           String
+  backgroundKey  String
+  backgroundMime String // application/pdf (first page is used) or image/png | image/jpeg
+  pageWidth      Float // PDF points
+  pageHeight     Float
+  fields         Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   institute    Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   courses      Course[]
@@ -811,9 +812,13 @@ model Certificate {
   templateId       String    @db.Uuid
   serialNo         String
   verificationCode String    @unique // public /verify/<code> page
-  pdfKey           String?
+  pdfKey           String? // rendered lazily; null until the PDF exists
+  /// What was printed, frozen at issue time: later renames don't change an issued certificate.
+  data             Json
   issuedAt         DateTime  @default(now())
   emailedAt        DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
 
   institute  Institute           @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   enrollment Enrollment          @relation(fields: [instituteId, enrollmentId], references: [instituteId, id])
