@@ -38,7 +38,7 @@ pnpm --filter @lms/api test             # needs Postgres on localhost:5432 (user
 
 The suite recreates an `lms_test` database from the migrations, applies RLS, and runs
 unit tests plus end-to-end tests over HTTP: auth, tenant isolation, roles, Razorpay
-onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance, course files.
+onboarding and webhooks, people, CSV import, courses, batches, enrollments, attendance, course files, fees and accounts.
 Razorpay, email and object storage are faked; the database is real. The S3 URL signing
 itself is unit-tested with the real AWS SDK (offline).
 
@@ -59,7 +59,11 @@ itself is unit-tested with the real AWS SDK (offline).
 | Attendance | `GET /batches/:id/attendance` · `GET/PUT /batches/:id/attendance/:date` |
 | Course content | `GET /courses/:id/materials` · `POST /courses/:id/materials/upload-url` · `POST /courses/:id/materials` · `PUT /courses/:id/materials/order` · `PATCH/DELETE /materials/:id` · `GET /materials/:id/download` · `POST /courses/:id/modules` · `PUT /courses/:id/modules/order` · `PATCH/DELETE /modules/:id` |
 | Branding & storage | `GET /public/institutes/:slug` · `POST /institute/logo/upload-url` · `POST /institute/logo` · `GET /institute/storage` |
-| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` · `GET /me/courses/:id/materials` · `GET /me/materials/:id/download` |
+| Fees (AR) | `GET/POST /invoices` · `POST /invoices/from-enrollment` · `GET/DELETE /invoices/:id` · `POST /invoices/:id/issue` · `void` · `POST /invoices/:id/payments` · `GET /payments` · `GET /payments/:id/receipt` · `POST /payments/:id/reverse` · `GET /students/:id/fees` · `GET/POST /discounts` · `PATCH /discounts/:id` |
+| Payables (AP) | `GET/POST /vendors` · `PATCH /vendors/:id` · `GET/POST /bills` · `GET /bills/:id` · `POST /bills/:id/payments` · `POST /bills/:id/void` |
+| Ledger | `GET/POST /accounts` · `PATCH /accounts/:id` · `GET /accounts/:id/ledger` · `GET/POST /journals` · `POST /journals/:id/reverse` |
+| Reports | `GET /reports/trial-balance` · `profit-and-loss` · `balance-sheet` · `receivables-ageing` · `payables-ageing` · `collections` |
+| Student portal | `GET /me/profile` · `GET /me/enrollments` · `GET /me/attendance` · `GET /me/courses/:id/materials` · `GET /me/materials/:id/download` · `GET /me/fees` · `GET /me/payments/:id/receipt` |
 | Health | `GET /health` · `GET /health/ready` |
 
 ### Razorpay setup
@@ -98,3 +102,22 @@ and `GET` from `https://*.<your-domain>` with header `Content-Type`; enable
 [GuardDuty Malware Protection for S3](https://docs.aws.amazon.com/guardduty/latest/ug/gdu-malware-protection-s3.html)
 on the bucket to scan uploads. Locally, `pnpm services:up` creates the `lms-private`
 bucket in MinIO.
+
+### Fees and accounts
+Every money document posts a balanced double-entry journal automatically:
+
+| Event | Debit | Credit |
+|---|---|---|
+| Invoice issued | Accounts Receivable (total) | Fee Income (after discounts), GST Payable (tax) |
+| Fee received | Cash in Hand (cash) or Bank (others), or a chosen asset account | Accounts Receivable |
+| Vendor bill | the bill's expense account | Accounts Payable |
+| Bill paid | Accounts Payable | Cash / Bank |
+
+Voiding an invoice or bill, or reversing a payment (bounced cheque), posts the mirror-image
+entry; nothing in the ledger is ever edited or deleted. The database enforces this too:
+every entry must balance at commit, and the app's database role has no UPDATE/DELETE on
+journal tables. Invoice, receipt and admission numbers are gap-free per institute.
+Discounts reduce the taxable value before GST. Instalment plans age by their own due dates.
+
+Not yet: CGST/SGST vs IGST split on invoices, period locking (closing a month), online fee
+collection, PDF invoices/receipts (they come with the certificate PDF renderer).

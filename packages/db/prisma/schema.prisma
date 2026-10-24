@@ -71,6 +71,7 @@ model Institute {
   certificateTemplates CertificateTemplate[]
   certificates         Certificate[]
   auditLogs            AuditLog[]
+  invoiceInstallments  InvoiceInstallment[]
 }
 
 model Plan {
@@ -525,7 +526,7 @@ enum InvoiceStatus {
 model StudentInvoice {
   id            String        @id @default(uuid()) @db.Uuid
   instituteId   String        @db.Uuid
-  number        String // from DocumentSequence, e.g. INV-2026-00042
+  number        String // INV-00042 from DocumentSequence once issued; DRAFT-… before
   studentId     String        @db.Uuid
   enrollmentId  String?       @db.Uuid
   issueDate     DateTime      @db.Date
@@ -537,19 +538,37 @@ model StudentInvoice {
   amountPaid    Decimal       @default(0) @db.Decimal(14, 2)
   status        InvoiceStatus @default(DRAFT)
   notes         String?
+  issuedAt      DateTime?
+  voidedAt      DateTime?
+  voidReason    String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  institute  Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
-  student    Student           @relation(fields: [instituteId, studentId], references: [instituteId, id])
-  enrollment Enrollment?       @relation(fields: [enrollmentId], references: [id])
-  lines      InvoiceLine[]
-  discounts  InvoiceDiscount[]
-  payments   StudentPayment[]
+  institute    Institute            @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  student      Student              @relation(fields: [instituteId, studentId], references: [instituteId, id])
+  enrollment   Enrollment?          @relation(fields: [enrollmentId], references: [id])
+  lines        InvoiceLine[]
+  discounts    InvoiceDiscount[]
+  payments     StudentPayment[]
+  installments InvoiceInstallment[]
 
   @@unique([instituteId, id])
   @@unique([instituteId, number])
   @@index([instituteId, studentId])
+}
+
+// Payment schedule for an invoice (fees in instalments). Amounts sum to the invoice total.
+model InvoiceInstallment {
+  id          String   @id @default(uuid()) @db.Uuid
+  instituteId String   @db.Uuid
+  invoiceId   String   @db.Uuid
+  dueDate     DateTime @db.Date
+  amount      Decimal  @db.Decimal(14, 2)
+
+  institute Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  invoice   StudentInvoice @relation(fields: [instituteId, invoiceId], references: [instituteId, id], onDelete: Cascade)
+
+  @@index([invoiceId])
 }
 
 model InvoiceLine {
@@ -591,24 +610,29 @@ enum PaymentMethod {
 }
 
 model StudentPayment {
-  id           String        @id @default(uuid()) @db.Uuid
-  instituteId  String        @db.Uuid
-  receiptNo    String
-  invoiceId    String        @db.Uuid
-  studentId    String        @db.Uuid
-  amount       Decimal       @db.Decimal(14, 2)
-  method       PaymentMethod
-  reference    String? // UTR / cheque no.
-  receivedAt   DateTime
-  recordedById String        @db.Uuid
-  createdAt    DateTime      @default(now())
+  id             String        @id @default(uuid()) @db.Uuid
+  instituteId    String        @db.Uuid
+  receiptNo      String
+  invoiceId      String        @db.Uuid
+  studentId      String        @db.Uuid
+  amount         Decimal       @db.Decimal(14, 2)
+  method         PaymentMethod
+  reference      String? // UTR / cheque no.
+  receivedAt     DateTime
+  accountId      String        @db.Uuid // cash or bank account the money went into
+  recordedById   String        @db.Uuid
+  reversedAt     DateTime? // e.g. a bounced cheque
+  reversalReason String?
+  createdAt      DateTime      @default(now())
 
   institute  Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   invoice    StudentInvoice @relation(fields: [instituteId, invoiceId], references: [instituteId, id])
   student    Student        @relation(fields: [instituteId, studentId], references: [instituteId, id])
+  account    Account        @relation("PaymentAccount", fields: [instituteId, accountId], references: [instituteId, id])
   recordedBy Membership     @relation("PaymentRecordedBy", fields: [instituteId, recordedById], references: [instituteId, id])
 
   @@unique([instituteId, receiptNo])
+  @@index([instituteId, invoiceId])
 }
 
 // ───────────────────────────── Accounts Payable ─────────────────────────────
@@ -642,6 +666,8 @@ model Bill {
   amountPaid       Decimal       @default(0) @db.Decimal(14, 2)
   status           InvoiceStatus @default(ISSUED)
   attachmentKey    String?
+  voidedAt         DateTime?
+  voidReason       String?
   createdAt        DateTime      @default(now())
 
   institute      Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
@@ -650,6 +676,7 @@ model Bill {
   payments       BillPayment[]
 
   @@unique([instituteId, id])
+  @@unique([instituteId, vendorId, billNumber])
 }
 
 model BillPayment {
@@ -660,9 +687,12 @@ model BillPayment {
   method      PaymentMethod
   reference   String?
   paidAt      DateTime
+  accountId   String        @db.Uuid // cash or bank account paid from
+  createdAt   DateTime      @default(now())
 
   institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   bill      Bill      @relation(fields: [instituteId, billId], references: [instituteId, id])
+  account   Account   @relation("BillPaymentAccount", fields: [instituteId, accountId], references: [instituteId, id])
 }
 
 // ───────────────────────────── General ledger (double entry) ─────────────────────────────
@@ -687,25 +717,28 @@ model Account {
   isSystem    Boolean     @default(false) // seeded accounts the posting rules depend on
   isActive    Boolean     @default(true)
 
-  institute Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
-  parent    Account?      @relation("AccountTree", fields: [parentId], references: [id])
-  children  Account[]     @relation("AccountTree")
-  lines     JournalLine[]
-  bills     Bill[]
+  institute       Institute        @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  parent          Account?         @relation("AccountTree", fields: [parentId], references: [id])
+  children        Account[]        @relation("AccountTree")
+  lines           JournalLine[]
+  bills           Bill[]
+  studentPayments StudentPayment[] @relation("PaymentAccount")
+  billPayments    BillPayment[]    @relation("BillPaymentAccount")
 
   @@unique([instituteId, id])
   @@unique([instituteId, code])
 }
 
 model JournalEntry {
-  id          String   @id @default(uuid()) @db.Uuid
-  instituteId String   @db.Uuid
-  date        DateTime @db.Date
-  memo        String?
-  sourceType  String? // "StudentInvoice" | "StudentPayment" | "Bill" | "BillPayment" | "Manual"
-  sourceId    String?  @db.Uuid
-  postedById  String   @db.Uuid
-  createdAt   DateTime @default(now())
+  id           String   @id @default(uuid()) @db.Uuid
+  instituteId  String   @db.Uuid
+  date         DateTime @db.Date
+  memo         String?
+  sourceType   String? // "StudentInvoice" | "StudentPayment" | "Bill" | "BillPayment" | "Manual"
+  sourceId     String?  @db.Uuid
+  reversalOfId String?  @db.Uuid // set on the entry that cancels another
+  postedById   String   @db.Uuid
+  createdAt    DateTime @default(now())
 
   institute Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   postedBy  Membership    @relation("JournalPostedBy", fields: [instituteId, postedById], references: [instituteId, id])

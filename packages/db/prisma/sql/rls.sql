@@ -43,7 +43,6 @@ BEGIN
   END LOOP;
 END $$;
 
--- Ledger integrity: a line is either a debit or a credit, never both or neither.
-ALTER TABLE "JournalLine" DROP CONSTRAINT IF EXISTS journal_line_one_side;
-ALTER TABLE "JournalLine" ADD CONSTRAINT journal_line_one_side
-  CHECK ((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0));
+-- The ledger is append-only for the application: mistakes are corrected with reversing
+-- entries, never by editing history. (The balance rules themselves live in a migration.)
+REVOKE UPDATE, DELETE ON "JournalEntry", "JournalLine" FROM lms_app;

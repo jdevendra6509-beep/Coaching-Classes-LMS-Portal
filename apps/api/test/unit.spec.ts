@@ -104,3 +104,47 @@ describe("S3 presigned URLs (real SDK, signed offline)", async () => {
     expect(url.searchParams.get("response-content-disposition")).toBe("attachment; filename*=UTF-8''Notes%20%E2%80%93%20Unit%201.pdf");
   });
 });
+
+describe("invoice maths", async () => {
+  const { computeTotals, rupeesInWords, overdueAmount } = await import("../src/finance/invoice-math.js");
+  const { allocate, D } = await import("../src/finance/money.js");
+
+  it("spreads discounts across lines before GST, to the paisa", () => {
+    const t = computeTotals(
+      [
+        { description: "Tuition", quantity: 1, unitPrice: 10000, taxRate: 18 },
+        { description: "Books", quantity: 2, unitPrice: 500, taxRate: 0 },
+      ],
+      [D(1100)],
+    );
+    // 11000 subtotal; discount 1000 on tuition, 100 on books; GST 18% of 9000 only.
+    expect(t.subtotal.toFixed(2)).toBe("11000.00");
+    expect(t.taxTotal.toFixed(2)).toBe("1620.00");
+    expect(t.total.toFixed(2)).toBe("11520.00");
+  });
+
+  it("allocation always adds back up exactly", () => {
+    const parts = allocate(D("100.00"), [D(1), D(1), D(1)]);
+    expect(parts.map((p) => p.toFixed(2))).toEqual(["33.34", "33.33", "33.33"]);
+  });
+
+  it("refuses discounts larger than the invoice", () => {
+    expect(() => computeTotals([{ description: "x", quantity: 1, unitPrice: 100, taxRate: 0 }], [D(101)])).toThrow(/exceed/);
+  });
+
+  it("only counts instalments due before today as overdue", () => {
+    const d = (s: string) => new Date(`${s}T00:00:00Z`);
+    const inv = { total: 300, amountPaid: 50, dueDate: d("2026-03-01"), issueDate: d("2026-01-01"), installments: [
+      { dueDate: d("2026-01-15"), amount: 100 }, { dueDate: d("2026-02-15"), amount: 100 }, { dueDate: d("2026-03-01"), amount: 100 },
+    ] };
+    expect(overdueAmount(inv, d("2026-02-15")).toFixed(2)).toBe("50.00"); // due today isn't late yet
+    expect(overdueAmount(inv, d("2026-02-16")).toFixed(2)).toBe("150.00");
+  });
+
+  it("writes amounts in words, Indian style", () => {
+    expect(rupeesInWords(20000)).toBe("Rupees Twenty Thousand Only");
+    expect(rupeesInWords("125000.50")).toBe("Rupees One Lakh Twenty Five Thousand and Fifty Paise Only");
+    expect(rupeesInWords(1234567890)).toBe("Rupees One Hundred Twenty Three Crore Forty Five Lakh Sixty Seven Thousand Eight Hundred Ninety Only");
+    expect(rupeesInWords(0.05)).toBe("Rupees Zero and Five Paise Only");
+  });
+});

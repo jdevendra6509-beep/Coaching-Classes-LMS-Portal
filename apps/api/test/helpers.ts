@@ -66,9 +66,10 @@ export class Mailbox {
   last(to: string): MailMessage | undefined {
     return this.sent.filter((m) => m.to === to).at(-1);
   }
-  /** Pulls the ?token=... value out of the most recent email to `to`. */
+  /** Pulls the ?token=... value out of the most recent email to `to` that carries one. */
   tokenFor(to: string): string {
-    const match = this.last(to)?.text.match(/token=([A-Za-z0-9_-]+)/);
+    const withToken = this.sent.filter((m) => m.to === to && /token=/.test(m.text)).at(-1);
+    const match = withToken?.text.match(/token=([A-Za-z0-9_-]+)/);
     if (!match) throw new Error(`No token email for ${to}`);
     return match[1];
   }
@@ -163,6 +164,9 @@ export function signWebhook(body: object, secret = process.env.RAZORPAY_WEBHOOK_
 /** An active institute with a signed-in admin. `as(token)` builds the auth header. */
 export async function setupInstitute(ctx: TestContext) {
   const inst = await createInstitute(ctx.db);
+  // Real institutes get their chart of accounts and number sequences on activation.
+  const { ProvisioningService } = await import("../src/platform/provisioning.service.js");
+  await ctx.db.$transaction((tx) => ctx.app.get(ProvisioningService).seedInstitute(tx, inst.id));
   const admin = await createUser(ctx.db, { instituteId: inst.id, roles: ["INSTITUTE_ADMIN"] });
   const { token } = await login(ctx, admin.email, inst.slug);
   const authed = (t = token) => ({ Authorization: `Bearer ${t}`, "X-Institute-Slug": inst.slug });

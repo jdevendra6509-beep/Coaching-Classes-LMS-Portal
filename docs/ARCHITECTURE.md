@@ -140,7 +140,7 @@ privacy lawyer before onboarding paying institutes.
 | **M1 Platform & billing** ✅ backend | Institute signup, plans, Razorpay subscriptions + webhooks, platform admin console, welcome email. Remaining: UI, worker jobs (grace-period expiry, pending-signup cleanup), platform GST invoices. |
 | **M2 Institute core** ✅ backend | Profile, staff, teachers, students (CSV import), courses, batches, enrollments, attendance, student portal views. Remaining: logo upload (comes with file storage in M3), UI. |
 | **M3 LMS** ✅ backend | Direct-to-S3 uploads with signed tickets, modules and ordering, publish/unpublish, links and videos, short-lived download links for enrolled students, storage quota, institute logo. Remaining: malware scanning (bucket setting), video provider, UI. |
-| **M4 Fees & accounts** | Invoices, discounts, receipts, AP (vendors, bills), ledger, reports. |
+| **M4 Fees & accounts** ✅ backend | Invoices with discounts, GST and instalments, receipts and reversals, AP (vendors, bills), double-entry ledger with DB-enforced balance and append-only journals, trial balance, P&L, balance sheet, account ledger, AR/AP ageing, collections. Remaining: CGST/SGST split, period locking, PDFs, UI. |
 | **M5 Certificates** | Template editor, completion + fee gating, PDF generation, email, verification page. |
 | **M6 Hardening & launch** | Tenant-isolation and e2e tests, load test, backups/restore drill, Terraform for AWS Mumbai, monitoring (Sentry + CloudWatch). |
 

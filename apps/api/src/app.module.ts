@@ -6,6 +6,7 @@ import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { PrismaExceptionFilter } from "./common/prisma-exception.filter.js";
 import { HealthController } from "./health/health.controller.js";
+import { FinanceModule } from "./finance/finance.module.js";
 import { InstituteModule } from "./institute/institute.module.js";
 import { LmsModule } from "./lms/lms.module.js";
 import { MailModule } from "./mail/mail.module.js";
@@ -35,6 +36,7 @@ import { TenantMiddleware } from "./tenancy/tenant.middleware.js";
     PortalModule,
     StorageModule,
     LmsModule,
+    FinanceModule,
   ],
   controllers: [HealthController],
   providers: [
