@@ -1,0 +1,809 @@
+// Coaching LMS — multi-tenant data model.
+//
+// Tenancy rules (see docs/ARCHITECTURE.md):
+//  * Every institute-owned table carries `instituteId` and `@@unique([instituteId, id])`.
+//  * Required cross-entity links are composite FKs on (instituteId, xId) so a row of
+//    Institute A can never point at a row of Institute B, even through an API bug.
+//  * Row-level security (prisma/sql/rls.sql) additionally restricts the app role to the
+//    institute set in `app.institute_id` for the current transaction.
+//  * Money is Decimal(14,2) in INR. Never use floats for money.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Platform (super-admin) ─────────────────────────────
+
+enum InstituteStatus {
+  PENDING_PAYMENT // registered, first subscription payment not yet captured
+  ACTIVE
+  PAST_DUE // renewal failed; grace period, read-only after it ends
+  SUSPENDED // blocked by platform admin
+  CANCELLED
+}
+
+model Institute {
+  id        String          @id @default(uuid()) @db.Uuid
+  slug      String          @unique // subdomain: <slug>.platform.in
+  name      String
+  legalName String?
+  email     String // owner/contact email; login email is sent here after payment
+  phone     String
+  gstin     String?
+  address   String?
+  city      String?
+  state     String?
+  pincode   String?
+  logoKey   String? // object-storage key
+  status    InstituteStatus @default(PENDING_PAYMENT)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  subscriptions        Subscription[]
+  platformPayments     PlatformPayment[]
+  memberships          Membership[]
+  teachers             Teacher[]
+  students             Student[]
+  courses              Course[]
+  batches              Batch[]
+  batchTeachers        BatchTeacher[]
+  enrollments          Enrollment[]
+  attendanceSessions   AttendanceSession[]
+  attendanceRecords    AttendanceRecord[]
+  courseModules        CourseModule[]
+  materials            Material[]
+  discounts            Discount[]
+  invoices             StudentInvoice[]
+  invoiceLines         InvoiceLine[]
+  invoiceDiscounts     InvoiceDiscount[]
+  studentPayments      StudentPayment[]
+  vendors              Vendor[]
+  bills                Bill[]
+  billPayments         BillPayment[]
+  accounts             Account[]
+  journalEntries       JournalEntry[]
+  journalLines         JournalLine[]
+  documentSequences    DocumentSequence[]
+  certificateTemplates CertificateTemplate[]
+  certificates         Certificate[]
+  auditLogs            AuditLog[]
+}
+
+model Plan {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique // e.g. "starter", "growth"
+  name           String
+  pricePerMonth  Decimal  @db.Decimal(14, 2) // INR, exclusive of GST
+  maxStudents    Int
+  maxStorageMb   Int
+  razorpayPlanId String?  @unique
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+enum SubscriptionStatus {
+  CREATED // awaiting first payment / mandate authorisation
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+model Subscription {
+  id                     String             @id @default(uuid()) @db.Uuid
+  instituteId            String             @db.Uuid
+  planId                 String             @db.Uuid
+  status                 SubscriptionStatus @default(CREATED)
+  razorpaySubscriptionId String?            @unique
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime? // access is paid up to this instant (advance billing)
+  cancelAtPeriodEnd      Boolean            @default(false)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  institute Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  plan      Plan              @relation(fields: [planId], references: [id])
+  payments  PlatformPayment[]
+
+  @@index([instituteId])
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+// Money the platform receives from institutes (Razorpay).
+model PlatformPayment {
+  id                String        @id @default(uuid()) @db.Uuid
+  instituteId       String        @db.Uuid
+  subscriptionId    String?       @db.Uuid
+  amount            Decimal       @db.Decimal(14, 2)
+  gstAmount         Decimal       @default(0) @db.Decimal(14, 2)
+  periodStart       DateTime
+  periodEnd         DateTime
+  status            PaymentStatus @default(CREATED)
+  razorpayOrderId   String?       @unique
+  razorpayPaymentId String?       @unique
+  invoiceNumber     String?       @unique // platform's GST invoice to the institute
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+
+  institute    Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([instituteId])
+}
+
+// Every Razorpay webhook is stored once (unique event id) before processing: idempotency + audit.
+model WebhookEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  provider    String // "razorpay"
+  eventId     String
+  eventType   String
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  error       String?
+
+  @@unique([provider, eventId])
+}
+
+// ───────────────────────────── Identity ─────────────────────────────
+
+enum UserStatus {
+  INVITED // account created, password not yet set
+  ACTIVE
+  DISABLED
+}
+
+// A global person. The same email can belong to several institutes through memberships.
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique
+  phone           String?
+  name            String
+  passwordHash    String? // argon2id; null until the invite is accepted
+  isPlatformAdmin Boolean    @default(false)
+  mfaSecret       String? // TOTP, mandatory for platform and institute admins
+  status          UserStatus @default(INVITED)
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  memberships Membership[]
+  sessions    AuthSession[]
+  tokens      AuthToken[]
+}
+
+enum Role {
+  INSTITUTE_ADMIN
+  ACCOUNTANT
+  TEACHER
+  STUDENT
+}
+
+model Membership {
+  id          String   @id @default(uuid()) @db.Uuid
+  instituteId String   @db.Uuid
+  userId      String   @db.Uuid
+  role        Role
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teacher   Teacher?
+  student   Student?
+
+  uploadedMaterials   Material[]          @relation("MaterialUploadedBy")
+  takenAttendance     AttendanceSession[] @relation("AttendanceTakenBy")
+  completedEnrollment Enrollment[]        @relation("EnrollmentCompletedBy")
+  recordedPayments    StudentPayment[]    @relation("PaymentRecordedBy")
+  postedJournals      JournalEntry[]      @relation("JournalPostedBy")
+  auditLogs           AuditLog[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, userId, role])
+  @@index([userId])
+}
+
+// Refresh-token sessions. Only the hash of the token is stored.
+model AuthSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  instituteId String?   @db.Uuid // institute context chosen at login; null for platform admin
+  tokenHash   String    @unique
+  userAgent   String?
+  ip          String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum AuthTokenType {
+  INVITE // "set your password" link in the welcome email
+  PASSWORD_RESET
+  EMAIL_VERIFY
+}
+
+model AuthToken {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @db.Uuid
+  type      AuthTokenType
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── People ─────────────────────────────
+
+model Teacher {
+  id            String    @id @default(uuid()) @db.Uuid
+  instituteId   String    @db.Uuid
+  membershipId  String    @db.Uuid
+  employeeCode  String?
+  qualification String?
+  joiningDate   DateTime? @db.Date
+  createdAt     DateTime  @default(now())
+
+  institute  Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  membership Membership     @relation(fields: [instituteId, membershipId], references: [instituteId, id], onDelete: Cascade)
+  batches    BatchTeacher[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, membershipId])
+  @@unique([instituteId, employeeCode])
+}
+
+model Student {
+  id            String    @id @default(uuid()) @db.Uuid
+  instituteId   String    @db.Uuid
+  membershipId  String    @db.Uuid
+  admissionNo   String
+  dateOfBirth   DateTime? @db.Date
+  guardianName  String?
+  guardianPhone String?
+  guardianEmail String?
+  address       String?
+  createdAt     DateTime  @default(now())
+
+  institute         Institute          @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  membership        Membership         @relation(fields: [instituteId, membershipId], references: [instituteId, id], onDelete: Cascade)
+  enrollments       Enrollment[]
+  attendanceRecords AttendanceRecord[]
+  invoices          StudentInvoice[]
+  payments          StudentPayment[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, membershipId])
+  @@unique([instituteId, admissionNo])
+}
+
+// ───────────────────────────── Academics ─────────────────────────────
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Course {
+  id                    String       @id @default(uuid()) @db.Uuid
+  instituteId           String       @db.Uuid
+  code                  String
+  name                  String
+  description           String?
+  durationWeeks         Int?
+  fee                   Decimal      @db.Decimal(14, 2)
+  status                CourseStatus @default(DRAFT)
+  certificateTemplateId String?      @db.Uuid
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  institute           Institute            @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  certificateTemplate CertificateTemplate? @relation(fields: [certificateTemplateId], references: [id])
+  batches             Batch[]
+  enrollments         Enrollment[]
+  modules             CourseModule[]
+  materials           Material[]
+  discounts           Discount[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, code])
+}
+
+model Batch {
+  id          String    @id @default(uuid()) @db.Uuid
+  instituteId String    @db.Uuid
+  courseId    String    @db.Uuid
+  name        String
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
+  schedule    String? // e.g. "Mon/Wed/Fri 5-7pm"
+  capacity    Int?
+  createdAt   DateTime  @default(now())
+
+  institute   Institute           @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  course      Course              @relation(fields: [instituteId, courseId], references: [instituteId, id])
+  teachers    BatchTeacher[]
+  enrollments Enrollment[]
+  attendance  AttendanceSession[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, courseId, id])
+}
+
+model BatchTeacher {
+  instituteId String @db.Uuid
+  batchId     String @db.Uuid
+  teacherId   String @db.Uuid
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batch     Batch     @relation(fields: [instituteId, batchId], references: [instituteId, id], onDelete: Cascade)
+  teacher   Teacher   @relation(fields: [instituteId, teacherId], references: [instituteId, id], onDelete: Cascade)
+
+  @@id([batchId, teacherId])
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED // set by a teacher; one of the two conditions for a certificate
+  DROPPED
+}
+
+model Enrollment {
+  id            String           @id @default(uuid()) @db.Uuid
+  instituteId   String           @db.Uuid
+  studentId     String           @db.Uuid
+  courseId      String           @db.Uuid
+  batchId       String           @db.Uuid
+  status        EnrollmentStatus @default(ACTIVE)
+  enrolledAt    DateTime         @default(now())
+  completedAt   DateTime?
+  completedById String?          @db.Uuid // Membership of the teacher who marked it complete
+
+  institute   Institute        @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  student     Student          @relation(fields: [instituteId, studentId], references: [instituteId, id])
+  course      Course           @relation(fields: [instituteId, courseId], references: [instituteId, id])
+  // batch must belong to the same course: enforced by the 3-column FK
+  batch       Batch            @relation(fields: [instituteId, courseId, batchId], references: [instituteId, courseId, id])
+  completedBy Membership?      @relation("EnrollmentCompletedBy", fields: [completedById], references: [id])
+  invoices    StudentInvoice[]
+  certificate Certificate?
+
+  @@unique([instituteId, id])
+  @@unique([studentId, batchId])
+  @@index([instituteId, courseId])
+}
+
+model AttendanceSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  instituteId String   @db.Uuid
+  batchId     String   @db.Uuid
+  date        DateTime @db.Date
+  takenById   String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  institute Institute          @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batch     Batch              @relation(fields: [instituteId, batchId], references: [instituteId, id])
+  takenBy   Membership         @relation("AttendanceTakenBy", fields: [instituteId, takenById], references: [instituteId, id])
+  records   AttendanceRecord[]
+
+  @@unique([instituteId, id])
+  @@unique([batchId, date])
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+model AttendanceRecord {
+  instituteId String           @db.Uuid
+  sessionId   String           @db.Uuid
+  studentId   String           @db.Uuid
+  status      AttendanceStatus
+  remark      String?
+
+  institute Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  session   AttendanceSession @relation(fields: [instituteId, sessionId], references: [instituteId, id], onDelete: Cascade)
+  student   Student           @relation(fields: [instituteId, studentId], references: [instituteId, id])
+
+  @@id([sessionId, studentId])
+  @@index([instituteId, studentId])
+}
+
+// ───────────────────────────── LMS content ─────────────────────────────
+
+model CourseModule {
+  id          String @id @default(uuid()) @db.Uuid
+  instituteId String @db.Uuid
+  courseId    String @db.Uuid
+  title       String
+  position    Int
+
+  institute Institute  @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  course    Course     @relation(fields: [instituteId, courseId], references: [instituteId, id], onDelete: Cascade)
+  materials Material[]
+
+  @@unique([instituteId, id])
+}
+
+enum MaterialType {
+  PDF
+  DOCUMENT
+  PRESENTATION
+  IMAGE
+  VIDEO
+  LINK
+}
+
+// Files live in private object storage; students get short-lived signed URLs only after
+// the API checks they hold an ACTIVE or COMPLETED enrollment in the course.
+model Material {
+  id           String       @id @default(uuid()) @db.Uuid
+  instituteId  String       @db.Uuid
+  courseId     String       @db.Uuid
+  moduleId     String?      @db.Uuid
+  title        String
+  description  String?
+  type         MaterialType
+  storageKey   String? // object key, for uploaded files
+  externalUrl  String? // for LINK / externally hosted video
+  mimeType     String?
+  sizeBytes    BigInt?
+  position     Int          @default(0)
+  isPublished  Boolean      @default(false)
+  uploadedById String       @db.Uuid
+  createdAt    DateTime     @default(now())
+
+  institute  Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  course     Course        @relation(fields: [instituteId, courseId], references: [instituteId, id], onDelete: Cascade)
+  module     CourseModule? @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  uploadedBy Membership    @relation("MaterialUploadedBy", fields: [instituteId, uploadedById], references: [instituteId, id])
+
+  @@unique([instituteId, id])
+  @@index([instituteId, courseId])
+}
+
+// ───────────────────────────── Fees (Accounts Receivable) ─────────────────────────────
+
+enum DiscountType {
+  PERCENT
+  FLAT
+}
+
+model Discount {
+  id          String       @id @default(uuid()) @db.Uuid
+  instituteId String       @db.Uuid
+  name        String // "Sibling discount", "Early bird"
+  type        DiscountType
+  value       Decimal      @db.Decimal(14, 2) // percent (0-100) or INR
+  courseId    String?      @db.Uuid // null = any course
+  validFrom   DateTime?
+  validTo     DateTime?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+
+  institute Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  course    Course?           @relation(fields: [courseId], references: [id])
+  applied   InvoiceDiscount[]
+
+  @@unique([instituteId, id])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+model StudentInvoice {
+  id            String        @id @default(uuid()) @db.Uuid
+  instituteId   String        @db.Uuid
+  number        String // from DocumentSequence, e.g. INV-2026-00042
+  studentId     String        @db.Uuid
+  enrollmentId  String?       @db.Uuid
+  issueDate     DateTime      @db.Date
+  dueDate       DateTime?     @db.Date
+  subtotal      Decimal       @db.Decimal(14, 2)
+  discountTotal Decimal       @default(0) @db.Decimal(14, 2)
+  taxTotal      Decimal       @default(0) @db.Decimal(14, 2)
+  total         Decimal       @db.Decimal(14, 2)
+  amountPaid    Decimal       @default(0) @db.Decimal(14, 2)
+  status        InvoiceStatus @default(DRAFT)
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  institute  Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  student    Student           @relation(fields: [instituteId, studentId], references: [instituteId, id])
+  enrollment Enrollment?       @relation(fields: [enrollmentId], references: [id])
+  lines      InvoiceLine[]
+  discounts  InvoiceDiscount[]
+  payments   StudentPayment[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, number])
+  @@index([instituteId, studentId])
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid()) @db.Uuid
+  instituteId String  @db.Uuid
+  invoiceId   String  @db.Uuid
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(14, 2)
+  taxRate     Decimal @default(0) @db.Decimal(5, 2) // GST %, e.g. 18.00
+  amount      Decimal @db.Decimal(14, 2)
+
+  institute Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  invoice   StudentInvoice @relation(fields: [instituteId, invoiceId], references: [instituteId, id], onDelete: Cascade)
+}
+
+// A discount actually applied to an invoice (snapshot, so later rule edits don't rewrite history).
+model InvoiceDiscount {
+  id          String   @id @default(uuid()) @db.Uuid
+  instituteId String   @db.Uuid
+  invoiceId   String   @db.Uuid
+  discountId  String?  @db.Uuid // null for an ad-hoc discount
+  description String
+  amount      Decimal  @db.Decimal(14, 2)
+  createdAt   DateTime @default(now())
+
+  institute Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  invoice   StudentInvoice @relation(fields: [instituteId, invoiceId], references: [instituteId, id], onDelete: Cascade)
+  discount  Discount?      @relation(fields: [discountId], references: [id])
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  BANK_TRANSFER
+  CHEQUE
+  CARD
+  ONLINE // gateway, later
+}
+
+model StudentPayment {
+  id           String        @id @default(uuid()) @db.Uuid
+  instituteId  String        @db.Uuid
+  receiptNo    String
+  invoiceId    String        @db.Uuid
+  studentId    String        @db.Uuid
+  amount       Decimal       @db.Decimal(14, 2)
+  method       PaymentMethod
+  reference    String? // UTR / cheque no.
+  receivedAt   DateTime
+  recordedById String        @db.Uuid
+  createdAt    DateTime      @default(now())
+
+  institute  Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  invoice    StudentInvoice @relation(fields: [instituteId, invoiceId], references: [instituteId, id])
+  student    Student        @relation(fields: [instituteId, studentId], references: [instituteId, id])
+  recordedBy Membership     @relation("PaymentRecordedBy", fields: [instituteId, recordedById], references: [instituteId, id])
+
+  @@unique([instituteId, receiptNo])
+}
+
+// ───────────────────────────── Accounts Payable ─────────────────────────────
+
+model Vendor {
+  id          String   @id @default(uuid()) @db.Uuid
+  instituteId String   @db.Uuid
+  name        String
+  gstin       String?
+  email       String?
+  phone       String?
+  address     String?
+  createdAt   DateTime @default(now())
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  bills     Bill[]
+
+  @@unique([instituteId, id])
+}
+
+model Bill {
+  id               String        @id @default(uuid()) @db.Uuid
+  instituteId      String        @db.Uuid
+  vendorId         String        @db.Uuid
+  billNumber       String // vendor's invoice number
+  billDate         DateTime      @db.Date
+  dueDate          DateTime?     @db.Date
+  expenseAccountId String        @db.Uuid
+  description      String?
+  total            Decimal       @db.Decimal(14, 2)
+  amountPaid       Decimal       @default(0) @db.Decimal(14, 2)
+  status           InvoiceStatus @default(ISSUED)
+  attachmentKey    String?
+  createdAt        DateTime      @default(now())
+
+  institute      Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  vendor         Vendor        @relation(fields: [instituteId, vendorId], references: [instituteId, id])
+  expenseAccount Account       @relation(fields: [instituteId, expenseAccountId], references: [instituteId, id])
+  payments       BillPayment[]
+
+  @@unique([instituteId, id])
+}
+
+model BillPayment {
+  id          String        @id @default(uuid()) @db.Uuid
+  instituteId String        @db.Uuid
+  billId      String        @db.Uuid
+  amount      Decimal       @db.Decimal(14, 2)
+  method      PaymentMethod
+  reference   String?
+  paidAt      DateTime
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  bill      Bill      @relation(fields: [instituteId, billId], references: [instituteId, id])
+}
+
+// ───────────────────────────── General ledger (double entry) ─────────────────────────────
+// Invoices, receipts, bills and bill payments each post a balanced JournalEntry, so the
+// trial balance, P&L and balance sheet come from one place.
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model Account {
+  id          String      @id @default(uuid()) @db.Uuid
+  instituteId String      @db.Uuid
+  code        String // "1100"
+  name        String // "Cash in hand", "Accounts Receivable", "Fee income"
+  type        AccountType
+  parentId    String?     @db.Uuid
+  isSystem    Boolean     @default(false) // seeded accounts the posting rules depend on
+  isActive    Boolean     @default(true)
+
+  institute Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  parent    Account?      @relation("AccountTree", fields: [parentId], references: [id])
+  children  Account[]     @relation("AccountTree")
+  lines     JournalLine[]
+  bills     Bill[]
+
+  @@unique([instituteId, id])
+  @@unique([instituteId, code])
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  instituteId String   @db.Uuid
+  date        DateTime @db.Date
+  memo        String?
+  sourceType  String? // "StudentInvoice" | "StudentPayment" | "Bill" | "BillPayment" | "Manual"
+  sourceId    String?  @db.Uuid
+  postedById  String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  institute Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  postedBy  Membership    @relation("JournalPostedBy", fields: [instituteId, postedById], references: [instituteId, id])
+  lines     JournalLine[]
+
+  @@unique([instituteId, id])
+  @@index([instituteId, date])
+  @@index([sourceType, sourceId])
+}
+
+// Exactly one of debit/credit is non-zero (CHECK constraint in a migration).
+model JournalLine {
+  id          String  @id @default(uuid()) @db.Uuid
+  instituteId String  @db.Uuid
+  entryId     String  @db.Uuid
+  accountId   String  @db.Uuid
+  debit       Decimal @default(0) @db.Decimal(14, 2)
+  credit      Decimal @default(0) @db.Decimal(14, 2)
+
+  institute Institute    @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  entry     JournalEntry @relation(fields: [instituteId, entryId], references: [instituteId, id], onDelete: Cascade)
+  account   Account      @relation(fields: [instituteId, accountId], references: [instituteId, id])
+
+  @@index([instituteId, accountId])
+}
+
+// Gap-free, per-institute numbering for invoices, receipts and certificates.
+model DocumentSequence {
+  instituteId String @db.Uuid
+  type        String // "INVOICE" | "RECEIPT" | "CERTIFICATE"
+  prefix      String
+  nextNumber  Int    @default(1)
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+
+  @@id([instituteId, type])
+}
+
+// ───────────────────────────── Certificates ─────────────────────────────
+
+// The institute uploads a background (PDF or image) and places fields on it.
+// `fields` example:
+//   [{ "key": "studentName", "x": 300, "y": 420, "fontSize": 28, "font": "Helvetica-Bold",
+//      "color": "#1a1a1a", "align": "center" },
+//    { "key": "courseName", ... }, { "key": "completionDate", "format": "dd MMM yyyy" },
+//    { "key": "serialNo" }, { "key": "verificationQr", "size": 80 }]
+model CertificateTemplate {
+  id            String   @id @default(uuid()) @db.Uuid
+  instituteId   String   @db.Uuid
+  name          String
+  backgroundKey String
+  pageWidth     Float // PDF points
+  pageHeight    Float
+  fields        Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  institute    Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  courses      Course[]
+  certificates Certificate[]
+
+  @@unique([instituteId, id])
+}
+
+// Issued only when the enrollment is COMPLETED and every invoice for it is PAID.
+model Certificate {
+  id               String    @id @default(uuid()) @db.Uuid
+  instituteId      String    @db.Uuid
+  enrollmentId     String    @db.Uuid
+  templateId       String    @db.Uuid
+  serialNo         String
+  verificationCode String    @unique // public /verify/<code> page
+  pdfKey           String?
+  issuedAt         DateTime  @default(now())
+  emailedAt        DateTime?
+
+  institute  Institute           @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  enrollment Enrollment          @relation(fields: [instituteId, enrollmentId], references: [instituteId, id])
+  template   CertificateTemplate @relation(fields: [instituteId, templateId], references: [instituteId, id])
+
+  @@unique([instituteId, enrollmentId])
+  @@unique([instituteId, serialNo])
+}
+
+// ───────────────────────────── Audit ─────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  instituteId  String?  @db.Uuid // null for platform-level actions
+  actorUserId  String?  @db.Uuid
+  membershipId String?  @db.Uuid
+  action       String // "student.create", "invoice.void", "subscription.suspend"
+  entityType   String
+  entityId     String?
+  metadata     Json?
+  ip           String?
+  createdAt    DateTime @default(now())
+
+  institute  Institute?  @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  membership Membership? @relation(fields: [membershipId], references: [id])
+
+  @@index([instituteId, createdAt])
+}

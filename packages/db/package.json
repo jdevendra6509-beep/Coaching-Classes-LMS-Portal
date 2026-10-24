@@ -1,0 +1,18 @@
+{
+  "name": "@lms/db",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "validate": "prisma validate",
+    "format": "prisma format",
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.10.1"
+  },
+  "devDependencies": {
+    "prisma": "^7.10.1"
+  }
+}
