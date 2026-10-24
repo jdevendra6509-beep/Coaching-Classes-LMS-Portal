@@ -136,15 +136,17 @@ privacy lawyer before onboarding paying institutes.
 
 | Milestone | Scope |
 |---|---|
-| **M0 Foundation** ✅ partly | Monorepo, local services, data model, RLS. Next: NestJS skeleton with tenant context + auth, Next.js shell with subdomain routing, CI (lint, typecheck, tests). |
-| **M1 Platform & billing** | Institute signup, plans, Razorpay subscriptions + webhooks, platform admin console, welcome email. |
+| **M0 Foundation** ✅ backend | Monorepo, local services, data model, RLS, NestJS API with tenant context, auth (sessions, invites, reset, TOTP MFA), CI. Remaining: Next.js shell with subdomain routing. |
+| **M1 Platform & billing** ✅ backend | Institute signup, plans, Razorpay subscriptions + webhooks, platform admin console, welcome email. Remaining: UI, worker jobs (grace-period expiry, pending-signup cleanup), platform GST invoices. |
 | **M2 Institute core** | Profile/branding, teachers, students (CSV import), courses, batches, enrollments, attendance. |
 | **M3 LMS** | Material upload/organisation, student portal to view/download. |
 | **M4 Fees & accounts** | Invoices, discounts, receipts, AP (vendors, bills), ledger, reports. |
 | **M5 Certificates** | Template editor, completion + fee gating, PDF generation, email, verification page. |
 | **M6 Hardening & launch** | Tenant-isolation and e2e tests, load test, backups/restore drill, Terraform for AWS Mumbai, monitoring (Sentry + CloudWatch). |
 
-## 8. Open questions (defaults assumed until you say otherwise)
+## 8. Decisions
+
+The defaults below were confirmed.
 
 1. **Student fees online?** Default: institutes *record* fees (cash/UPI/bank) in v1.
    Online student payments would need either each institute's own Razorpay keys or

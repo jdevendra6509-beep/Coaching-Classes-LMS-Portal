@@ -175,7 +175,8 @@ model User {
   name            String
   passwordHash    String? // argon2id; null until the invite is accepted
   isPlatformAdmin Boolean    @default(false)
-  mfaSecret       String? // TOTP, mandatory for platform and institute admins
+  mfaSecret       String? // TOTP secret, AES-256-GCM encrypted
+  mfaEnabled      Boolean    @default(false)
   status          UserStatus @default(INVITED)
   lastLoginAt     DateTime?
   createdAt       DateTime   @default(now())
