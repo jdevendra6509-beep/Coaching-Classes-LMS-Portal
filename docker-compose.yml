@@ -19,6 +19,12 @@ services:
       MINIO_ROOT_PASSWORD: minio12345
     ports: ["9000:9000", "9001:9001"]
     volumes: [miniodata:/data]
+  minio-setup: # creates the private bucket once MinIO is up
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: >
+      sh -c "until mc alias set local http://minio:9000 minio minio12345; do sleep 1; done;
+             mc mb --ignore-existing local/lms-private"
   mailpit: # catches outgoing email locally; UI on :8025
     image: axllent/mailpit:latest
     ports: ["1025:1025", "8025:8025"]

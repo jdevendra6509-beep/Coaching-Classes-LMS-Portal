@@ -6,16 +6,25 @@
 -- `true` = transaction-local, so a pooled connection never carries one tenant's context
 -- into another request. With no context set, tenant tables return zero rows.
 --
--- Platform-admin endpoints and webhook/worker jobs that span institutes use `lms_platform`
--- (BYPASSRLS), behind separate code paths that only platform admins can reach.
+-- Platform-admin endpoints and webhook/worker jobs that span institutes use `lms_platform`,
+-- behind separate code paths that only platform admins can reach. It sees every row through
+-- an explicit policy rather than the BYPASSRLS attribute, which managed Postgres (e.g. AWS RDS)
+-- doesn't let ordinary admins grant.
+--
+-- The passwords below are for local development only; deployments set real ones right after
+-- this script runs (packages/db/scripts/migrate.mjs).
 
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lms_app') THEN
-    CREATE ROLE lms_app LOGIN PASSWORD 'lms_app'; -- dev only; real secrets come from Secrets Manager
+    CREATE ROLE lms_app LOGIN PASSWORD 'lms_app';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lms_platform') THEN
-    CREATE ROLE lms_platform LOGIN BYPASSRLS PASSWORD 'lms_platform';
+    CREATE ROLE lms_platform LOGIN PASSWORD 'lms_platform';
+  END IF;
+  -- Databases set up before the platform_all policies existed gave this role BYPASSRLS.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lms_platform' AND rolbypassrls) THEN
+    ALTER ROLE lms_platform NOBYPASSRLS;
   END IF;
 END $$;
 
@@ -35,6 +44,8 @@ BEGIN
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t.table_name);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t.table_name);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t.table_name);
+    EXECUTE format('DROP POLICY IF EXISTS platform_all ON %I', t.table_name);
+    EXECUTE format('CREATE POLICY platform_all ON %I TO lms_platform USING (true) WITH CHECK (true)', t.table_name);
     EXECUTE format(
       'CREATE POLICY tenant_isolation ON %I TO lms_app
          USING ("instituteId" = NULLIF(current_setting(''app.institute_id'', true), '''')::uuid)
@@ -43,7 +54,25 @@ BEGIN
   END LOOP;
 END $$;
 
--- Ledger integrity: a line is either a debit or a credit, never both or neither.
-ALTER TABLE "JournalLine" DROP CONSTRAINT IF EXISTS journal_line_one_side;
-ALTER TABLE "JournalLine" ADD CONSTRAINT journal_line_one_side
-  CHECK ((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0));
+-- The ledger is append-only for the application: mistakes are corrected with reversing
+-- entries, never by editing history. (The balance rules themselves live in a migration.)
+REVOKE UPDATE, DELETE ON "JournalEntry", "JournalLine" FROM lms_app;
+
+-- Supabase publishes the public schema over its REST API to the `anon` and `authenticated`
+-- roles (the anon key ships in browsers) and grants them every new table by default. This app
+-- never uses that API: take all access away, including on tables without RLS such as "User".
+-- No-op on plain Postgres and RDS, where these roles don't exist.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %I', r);
+      EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %I', r);
+      EXECUTE format('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM %I', r);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %I', r);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I', r);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM %I', r);
+    END IF;
+  END LOOP;
+END $$;

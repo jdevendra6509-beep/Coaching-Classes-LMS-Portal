@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50: oklch(0.97 0.02 265);
+  --color-brand-100: oklch(0.93 0.04 265);
+  --color-brand-500: oklch(0.55 0.18 265);
+  --color-brand-600: oklch(0.49 0.19 265);
+  --color-brand-700: oklch(0.43 0.17 265);
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}

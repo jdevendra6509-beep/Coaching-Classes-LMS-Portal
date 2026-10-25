@@ -1,0 +1,99 @@
+# Ships main to AWS after CI passes: build images → run migrations → roll out API, then web.
+# Needs one repository variable, AWS_DEPLOY_ROLE_ARN (the `deploy_role_arn` Terraform output).
+# No AWS keys are stored in GitHub: the job gets short-lived credentials through OIDC.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+jobs:
+  deploy:
+    if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Load deploy config
+        id: cfg
+        run: |
+          aws ssm get-parameter --name /lms-production/deploy-config --query Parameter.Value --output text > deploy-config.json
+          echo "TAG=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_ENV"
+          echo "api=$(jq -r .apiRepository deploy-config.json)" >> "$GITHUB_OUTPUT"
+          echo "web=$(jq -r .webRepository deploy-config.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.cfg.outputs.api }}:${{ env.TAG }},${{ steps.cfg.outputs.api }}:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.cfg.outputs.web }}:${{ env.TAG }},${{ steps.cfg.outputs.web }}:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Run database migrations
+        run: |
+          source .github/scripts/ecs.sh
+          arn=$(register_with_image "$(cfg migrateFamily)" "$(cfg apiRepository):$TAG")
+          net=$(jq -c '{awsvpcConfiguration:{subnets:.subnets,securityGroups:[.securityGroup],assignPublicIp:"DISABLED"}}' deploy-config.json)
+          task=$(aws ecs run-task --cluster "$(cfg cluster)" --launch-type FARGATE --task-definition "$arn" \
+            --network-configuration "$net" --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $task"
+          aws ecs wait tasks-stopped --cluster "$(cfg cluster)" --tasks "$task"
+          aws logs get-log-events --log-group-name "$(cfg migrateLogGroup)" \
+            --log-stream-name "migrate/migrate/${task##*/}" --query 'events[].message' --output text || true
+          code=$(aws ecs describe-tasks --cluster "$(cfg cluster)" --tasks "$task" --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$code" != "0" ]; then
+            aws ecs describe-tasks --cluster "$(cfg cluster)" --tasks "$task" --query 'tasks[0].stoppedReason' --output text
+            echo "::error::Migrations failed (exit code $code); nothing was deployed."
+            exit 1
+          fi
+
+      - name: Deploy API
+        run: |
+          source .github/scripts/ecs.sh
+          deploy_service "$(cfg apiService)" "$(cfg apiTaskFamily)" "$(cfg apiRepository):$TAG"
+
+      - name: Deploy web
+        run: |
+          source .github/scripts/ecs.sh
+          deploy_service "$(cfg webService)" "$(cfg webTaskFamily)" "$(cfg webRepository):$TAG"

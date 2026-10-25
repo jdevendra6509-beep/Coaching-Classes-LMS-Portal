@@ -1,0 +1,61 @@
+# Demo hosting on Render, with Supabase for Postgres and file storage. See docs/DEMO.md.
+# Render → New → Blueprint → pick this repository. Values marked `sync: false` are asked for
+# once in the dashboard; the generated ones are created by Render and never leave it.
+# (Production hosting on AWS lives in infrastructure/terraform and docs/DEPLOYMENT.md.)
+services:
+  - type: web
+    name: lms-api
+    runtime: docker
+    region: singapore # closest Render region to India; create the Supabase project there too
+    plan: starter # paid plan: needed to receive private-network traffic and run preDeployCommand
+    branch: main
+    autoDeployTrigger: checksPass # deploy only after GitHub CI is green
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/ready
+    # Prisma migrations + row-level security + role passwords, before each release goes live.
+    preDeployCommand: node node_modules/@lms/db/scripts/migrate.mjs
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: PORT, value: "4000" }
+      # Supabase CA certificate, added as a Render secret file named supabase-ca.crt.
+      - { key: NODE_EXTRA_CA_CERTS, value: /etc/secrets/supabase-ca.crt }
+      - { key: JWT_SECRET, generateValue: true }
+      - { key: ENCRYPTION_KEY, generateValue: true } # 32 random bytes, base64
+      - { key: DATABASE_URL, sync: false } # lms_app via the transaction pooler (:6543)
+      - { key: DATABASE_URL_PLATFORM, sync: false } # lms_platform via the transaction pooler
+      - { key: DATABASE_URL_MIGRATE, sync: false } # postgres via the session pooler (:5432)
+      - { key: PLATFORM_HOST, sync: false } # e.g. lmsdemo.in
+      - { key: PLATFORM_URL, sync: false } # e.g. https://lmsdemo.in
+      - { key: APP_URL_TEMPLATE, sync: false } # e.g. https://{slug}.lmsdemo.in
+      - { key: CORS_ORIGINS, sync: false } # e.g. https://lmsdemo.in
+      - { key: SMTP_URL, sync: false }
+      - { key: MAIL_FROM, sync: false }
+      - { key: STORAGE_DRIVER, value: s3 }
+      - { key: S3_BUCKET, value: lms-files }
+      - { key: S3_FORCE_PATH_STYLE, value: "true" }
+      - { key: S3_ENDPOINT, sync: false } # https://<project-ref>.storage.supabase.co/storage/v1/s3
+      - { key: S3_REGION, sync: false } # the Supabase project's region, e.g. ap-southeast-1
+      - { key: S3_ACCESS_KEY, sync: false }
+      - { key: S3_SECRET_KEY, sync: false }
+      - { key: MAX_UPLOAD_MB, value: "50" } # Supabase free plan's per-file limit
+      - { key: RAZORPAY_KEY_ID, sync: false }
+      - { key: RAZORPAY_KEY_SECRET, sync: false }
+      - { key: RAZORPAY_WEBHOOK_SECRET, sync: false }
+
+  - type: web
+    name: lms-web
+    runtime: docker
+    region: singapore
+    plan: starter # the free plan works too, but sleeps when idle (about a minute to wake up)
+    branch: main
+    autoDeployTrigger: checksPass
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    envVars:
+      - { key: PLATFORM_HOST, sync: false } # same value as the API's
+      # The API over Render's private network, so client IPs (used for login rate limits and
+      # the audit log) arrive exactly as the web app forwards them.
+      - key: API_URL
+        fromService: { type: web, name: lms-api, property: hostport }

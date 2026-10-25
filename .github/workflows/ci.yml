@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lms
+          POSTGRES_PASSWORD: lms
+          POSTGRES_DB: lms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lms" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @lms/db validate
+      - name: Supabase setup script matches the migrations
+        run: pnpm --filter @lms/db build:supabase-sql && git diff --exit-code packages/db/supabase/setup.sql
+      - run: pnpm --filter @lms/api typecheck
+      - run: pnpm --filter @lms/api build
+      # Recreates lms_test from the migrations, applies RLS, then runs unit + e2e suites.
+      - run: pnpm --filter @lms/api test
+      - run: pnpm --filter @lms/web typecheck
+      - run: pnpm --filter @lms/web build
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate

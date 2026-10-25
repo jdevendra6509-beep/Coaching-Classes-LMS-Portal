@@ -1,0 +1,180 @@
+import { parseCsv } from "../src/common/csv.js";
+import { decrypt, encrypt } from "../src/common/crypto.js";
+import { totpCode, verifyTotp } from "../src/auth/totp.js";
+import { chargeAmountPaise, splitGst } from "../src/platform/money.js";
+import { resolveSlug } from "../src/tenancy/tenant.middleware.js";
+import type { AppRequest } from "../src/common/request.js";
+
+describe("TOTP", () => {
+  // RFC 6238 appendix B: ASCII secret "12345678901234567890", SHA-1, T=59s → 94287082 (last 6 digits).
+  const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+  it("matches the RFC 6238 test vectors", () => {
+    expect(totpCode(secret, 59_000)).toBe("287082");
+    expect(totpCode(secret, 1_111_111_109_000)).toBe("081804");
+  });
+
+  it("accepts one step of clock drift and nothing more", () => {
+    const now = 1_700_000_000_000;
+    expect(verifyTotp(secret, totpCode(secret, now - 30_000), now)).toBe(true);
+    expect(verifyTotp(secret, totpCode(secret, now - 90_000), now)).toBe(false);
+    expect(verifyTotp(secret, "12345", now)).toBe(false);
+  });
+});
+
+describe("encryption at rest", () => {
+  it("round-trips and uses a fresh IV each time", () => {
+    const a = encrypt("secret");
+    expect(a).not.toBe(encrypt("secret"));
+    expect(decrypt(a)).toBe("secret");
+  });
+
+  it("rejects tampered ciphertext", () => {
+    const [iv, tag, data] = encrypt("secret").split(".");
+    const flipped = Buffer.from(data, "base64url");
+    flipped[0] ^= 1;
+    expect(() => decrypt([iv, tag, flipped.toString("base64url")].join("."))).toThrow();
+  });
+});
+
+describe("subscription money", () => {
+  it("adds GST and converts to paise", () => {
+    expect(chargeAmountPaise(999, 18)).toBe(117882);
+    expect(chargeAmountPaise("1499.50", 18)).toBe(176941);
+  });
+
+  it("splits a GST-inclusive charge back into taxable value and GST", () => {
+    const { amount, gst } = splitGst(117882, 18);
+    expect(amount.toFixed(2)).toBe("999.00");
+    expect(gst.toFixed(2)).toBe("179.82");
+  });
+});
+
+describe("tenant slug resolution", () => {
+  const req = (hostname: string, slug?: string) =>
+    ({ hostname, header: (n: string) => (n === "x-institute-slug" ? slug : undefined) }) as unknown as AppRequest;
+
+  it("reads the subdomain of the platform host", () => {
+    expect(resolveSlug(req("alpha.lvh.me"))).toBe("alpha");
+  });
+
+  it("ignores the bare platform host, reserved and nested subdomains, and foreign hosts", () => {
+    expect(resolveSlug(req("lvh.me"))).toBeUndefined();
+    expect(resolveSlug(req("api.lvh.me"))).toBeUndefined();
+    expect(resolveSlug(req("a.b.lvh.me"))).toBeUndefined();
+    expect(resolveSlug(req("alpha.evil.com"))).toBeUndefined();
+  });
+
+  it("prefers the header the web app forwards", () => {
+    expect(resolveSlug(req("api.lvh.me", "Beta"))).toBe("beta");
+  });
+});
+
+describe("CSV parsing", () => {
+  it("handles quotes, embedded commas/newlines, CRLF, a BOM and blank lines", () => {
+    const csv = '﻿Name,Email,Address\r\n"Rao, Asha",asha@x.in,"Flat 2\nPune"\r\n\r\nRavi,"ravi@x.in",""" quoted """\r\n';
+    const { headers, rows } = parseCsv(csv);
+    expect(headers).toEqual(["name", "email", "address"]);
+    expect(rows).toEqual([
+      { name: "Rao, Asha", email: "asha@x.in", address: "Flat 2\nPune" },
+      { name: "Ravi", email: "ravi@x.in", address: '" quoted "' },
+    ]);
+  });
+
+  it("rejects an unterminated quote", () => {
+    expect(() => parseCsv('name\n"oops')).toThrow(/Unterminated/);
+  });
+});
+
+describe("S3 presigned URLs (real SDK, signed offline)", async () => {
+  const { StorageService } = await import("../src/storage/storage.service.js");
+  const storage = new StorageService();
+
+  it("upload URLs sign the content type and length, so S3 refuses anything else", async () => {
+    const url = new URL(await storage.presignUpload("institutes/i/courses/c/f.pdf", "application/pdf", 1234));
+    expect(url.pathname).toBe("/lms-test/institutes/i/courses/c/f.pdf"); // path-style for MinIO
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe("content-length;content-type;host");
+    expect(url.searchParams.get("X-Amz-Expires")).toBe("900");
+    expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("download URLs expire after 5 minutes and carry the filename", async () => {
+    const url = new URL(await storage.presignDownload("k.pdf", { fileName: "Notes – Unit 1.pdf" }));
+    expect(url.searchParams.get("X-Amz-Expires")).toBe("300");
+    expect(url.searchParams.get("response-content-disposition")).toBe("attachment; filename*=UTF-8''Notes%20%E2%80%93%20Unit%201.pdf");
+  });
+});
+
+describe("invoice maths", async () => {
+  const { computeTotals, rupeesInWords, overdueAmount } = await import("../src/finance/invoice-math.js");
+  const { allocate, D } = await import("../src/finance/money.js");
+
+  it("spreads discounts across lines before GST, to the paisa", () => {
+    const t = computeTotals(
+      [
+        { description: "Tuition", quantity: 1, unitPrice: 10000, taxRate: 18 },
+        { description: "Books", quantity: 2, unitPrice: 500, taxRate: 0 },
+      ],
+      [D(1100)],
+    );
+    // 11000 subtotal; discount 1000 on tuition, 100 on books; GST 18% of 9000 only.
+    expect(t.subtotal.toFixed(2)).toBe("11000.00");
+    expect(t.taxTotal.toFixed(2)).toBe("1620.00");
+    expect(t.total.toFixed(2)).toBe("11520.00");
+  });
+
+  it("allocation always adds back up exactly", () => {
+    const parts = allocate(D("100.00"), [D(1), D(1), D(1)]);
+    expect(parts.map((p) => p.toFixed(2))).toEqual(["33.34", "33.33", "33.33"]);
+  });
+
+  it("refuses discounts larger than the invoice", () => {
+    expect(() => computeTotals([{ description: "x", quantity: 1, unitPrice: 100, taxRate: 0 }], [D(101)])).toThrow(/exceed/);
+  });
+
+  it("only counts instalments due before today as overdue", () => {
+    const d = (s: string) => new Date(`${s}T00:00:00Z`);
+    const inv = { total: 300, amountPaid: 50, dueDate: d("2026-03-01"), issueDate: d("2026-01-01"), installments: [
+      { dueDate: d("2026-01-15"), amount: 100 }, { dueDate: d("2026-02-15"), amount: 100 }, { dueDate: d("2026-03-01"), amount: 100 },
+    ] };
+    expect(overdueAmount(inv, d("2026-02-15")).toFixed(2)).toBe("50.00"); // due today isn't late yet
+    expect(overdueAmount(inv, d("2026-02-16")).toFixed(2)).toBe("150.00");
+  });
+
+  it("writes amounts in words, Indian style", () => {
+    expect(rupeesInWords(20000)).toBe("Rupees Twenty Thousand Only");
+    expect(rupeesInWords("125000.50")).toBe("Rupees One Lakh Twenty Five Thousand and Fifty Paise Only");
+    expect(rupeesInWords(1234567890)).toBe("Rupees One Hundred Twenty Three Crore Forty Five Lakh Sixty Seven Thousand Eight Hundred Ninety Only");
+    expect(rupeesInWords(0.05)).toBe("Rupees Zero and Five Paise Only");
+  });
+});
+
+describe("PDF text helpers", async () => {
+  const { inr, formatDate, drawable } = await import("../src/pdf/text.js");
+  const { fillText } = await import("../src/pdf/certificate.js");
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+
+  it("groups rupees the Indian way", () => {
+    expect(inr("125000.5")).toBe("1,25,000.50");
+    expect(inr(999)).toBe("999.00");
+    expect(inr(12345678)).toBe("1,23,45,678.00");
+  });
+
+  it("formats dates", () => {
+    const d = new Date("2026-03-05T00:00:00Z");
+    expect(formatDate(d)).toBe("5 March 2026");
+    expect(formatDate(d, "DD/MM/YYYY")).toBe("05/03/2026");
+    expect(formatDate(d, "MMMM D, YYYY")).toBe("March 5, 2026");
+  });
+
+  it("fills placeholders and leaves unknown ones alone", () => {
+    const v = { courseName: "NEET", completionDate: "2026-03-05" } as never;
+    expect(fillText("completed {courseName} on {completionDate} {nope}", v)).toBe("completed NEET on 5 March 2026 {nope}");
+  });
+
+  it("folds accents and drops characters the standard fonts can't draw", async () => {
+    const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica);
+    expect(drawable(font, "Zoë Ångström")).toBe("Zoe Angstrom");
+    expect(drawable(font, "Riya रिया Sen")).toBe("Riya  Sen");
+  });
+});

@@ -1,0 +1,5 @@
+domain_name       = "yourplatform.in"
+github_repository = "jdevendra6509-beep/Coaching-Classes-LMS-Portal"
+alarm_email       = "alerts@yourplatform.in"
+# mail_from       = "Your Platform <no-reply@yourplatform.in>"
+# db_multi_az     = true   # recommended once you have paying institutes

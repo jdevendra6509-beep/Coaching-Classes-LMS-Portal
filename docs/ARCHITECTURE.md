@@ -53,7 +53,8 @@ docker-compose.yml   Postgres, Redis, MinIO, Mailpit for local dev
 - **Row-level security** (`packages/db/prisma/sql/rls.sql`): the API connects as
   `lms_app`, which only sees rows whose `instituteId` equals the transaction-local
   `app.institute_id`. With no context set, tenant tables return nothing. Platform-admin
-  screens and webhooks use a separate `lms_platform` role behind platform-only routes.
+  screens and webhooks use a separate `lms_platform` role behind platform-only routes; it
+  reaches every institute through an explicit policy, not BYPASSRLS (which RDS doesn't grant).
 - Verified locally: no context → 0 rows; institute A sees only A; writing a B row while
   acting as A fails; context does not survive the transaction; cross-tenant FK rejected.
 - A `tests/tenant-isolation` suite will hit every endpoint as institute A asking for B's
@@ -136,15 +137,17 @@ privacy lawyer before onboarding paying institutes.
 
 | Milestone | Scope |
 |---|---|
-| **M0 Foundation** ✅ partly | Monorepo, local services, data model, RLS. Next: NestJS skeleton with tenant context + auth, Next.js shell with subdomain routing, CI (lint, typecheck, tests). |
-| **M1 Platform & billing** | Institute signup, plans, Razorpay subscriptions + webhooks, platform admin console, welcome email. |
-| **M2 Institute core** | Profile/branding, teachers, students (CSV import), courses, batches, enrollments, attendance. |
-| **M3 LMS** | Material upload/organisation, student portal to view/download. |
-| **M4 Fees & accounts** | Invoices, discounts, receipts, AP (vendors, bills), ledger, reports. |
-| **M5 Certificates** | Template editor, completion + fee gating, PDF generation, email, verification page. |
-| **M6 Hardening & launch** | Tenant-isolation and e2e tests, load test, backups/restore drill, Terraform for AWS Mumbai, monitoring (Sentry + CloudWatch). |
+| **M0 Foundation** ✅ | Monorepo, local services, data model, RLS, NestJS API with tenant context, auth (sessions, invites, reset, TOTP MFA), Next.js app with subdomain routing and a same-origin API pass-through, CI. |
+| **M1 Platform & billing** ✅ | Landing page with plans, signup with Razorpay Checkout, webhooks, platform console (institutes, suspend/reactivate, plans, payments), welcome email. Remaining: worker jobs (grace-period expiry, pending-signup cleanup), platform GST invoices. |
+| **M2 Institute core** ✅ | Profile and logo, staff, teachers, students (CSV import with dry run), courses, batches, enrollments, attendance register and history, role-based home pages. |
+| **M3 LMS** ✅ | Direct-to-storage uploads with signed tickets, modules and ordering, publish/unpublish, links and videos, short-lived download links for enrolled students, storage quota. Remaining: malware scanning (bucket setting), video provider. |
+| **M4 Fees & accounts** ✅ | Invoices with discounts, GST and instalments, receipts and reversals, AP (vendors, bills), double-entry ledger with DB-enforced balance and append-only journals, reports, invoice/receipt PDFs. Remaining: CGST/SGST split, period locking. |
+| **M5 Certificates** ✅ | Drag-and-drop layout editor over the institute's own artwork, automatic issue on completion + fees paid, PDF emailed to student and guardian, public QR verification page, revocation. Remaining: custom fonts for Indian scripts. |
+| **M6 Hardening & launch** | Done: Docker images, Terraform for AWS Mumbai (VPC, ALB + WAF, ECS Fargate, RDS with TLS and backups, S3, SES, Secrets Manager, CloudWatch alarms, 180-day logs), OIDC deploy pipeline with a migration step, [runbook](DEPLOYMENT.md). Remaining: browser end-to-end tests in CI, load test, restore drill, error tracking (Sentry), background job worker (email queue, renewals). |
 
-## 8. Open questions (defaults assumed until you say otherwise)
+## 8. Decisions
+
+The defaults below were confirmed.
 
 1. **Student fees online?** Default: institutes *record* fees (cash/UPI/bank) in v1.
    Online student payments would need either each institute's own Razorpay keys or
