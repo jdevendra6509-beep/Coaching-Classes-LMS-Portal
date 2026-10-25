@@ -37,7 +37,7 @@ test mode are free. You also need a domain or subdomain you control.
    `CHANGE_ME_APP_PASSWORD` and `CHANGE_ME_PLATFORM_PASSWORD` at the top with the two passwords
    from step 2. Paste the whole file into *SQL Editor → New query* and press *Run*. It creates
    every table, the row-level security policies, the two roles and the `lms-files` storage
-   bucket, all in one transaction. The final query lists 6 migrations and both roles. You
+   bucket, all in one transaction. The final query lists every migration and both roles. You
    can also skip this step: the first Render deploy does the same through its migration step.
 5. **Download the CA certificate.** Go to *Database → Settings → SSL Configuration → Download
    certificate*. It is needed in step 2.4.

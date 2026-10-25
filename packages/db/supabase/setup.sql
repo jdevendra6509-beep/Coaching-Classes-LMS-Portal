@@ -1086,6 +1086,14 @@ ALTER TABLE "CertificateTemplate" ADD COLUMN     "backgroundMime" TEXT NOT NULL;
 INSERT INTO "_prisma_migrations" (id, checksum, migration_name, started_at, finished_at, applied_steps_count)
 VALUES ('0dae1329-54f9-3a73-4984-7fab0e259551', '9928e4e2b315514c6489a76b20622bb8ca0de4f35452561d07e60568e227789c', '20261024095834_certificates', now(), now(), 1);
 
+-- ════════ Migration 20261025140000_function_search_path ════════
+-- Pin the trigger function's search_path, so it always reads public."JournalLine" whatever the
+-- caller's search_path (flagged by Supabase's security advisor; good practice everywhere).
+ALTER FUNCTION journal_entry_must_balance() SET search_path = public, pg_temp;
+
+INSERT INTO "_prisma_migrations" (id, checksum, migration_name, started_at, finished_at, applied_steps_count)
+VALUES ('0db37157-5840-c321-7c95-fadd6d3438c5', '90c389774aa444438f8ffd4f2bf79b64b4f6a182fefafa0645650b8a644c77da', '20261025140000_function_search_path', now(), now(), 1);
+
 -- ════════ Row-level security, roles and grants (prisma/sql/rls.sql) ════════
 -- Row-level security: defence in depth behind the API's own tenant checks.
 -- Run as the owner role after every migration that adds a tenant table (idempotent).
@@ -1186,6 +1194,6 @@ END $$;
 
 COMMIT;
 
--- Done. Check: should list 6 migrations and both roles.
+-- Done. Check: should list 7 migrations and both roles.
 SELECT migration_name FROM "_prisma_migrations" ORDER BY 1;
 SELECT rolname, rolcanlogin, rolbypassrls FROM pg_roles WHERE rolname IN ('lms_app', 'lms_platform');
