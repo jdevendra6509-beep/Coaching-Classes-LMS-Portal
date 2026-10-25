@@ -8,8 +8,8 @@ export type Tx = Prisma.TransactionClient;
  * Two connection pools:
  *  - `tenant(instituteId, fn)` runs fn in a transaction as the RLS-restricted `lms_app` role
  *    with `app.institute_id` set transaction-locally. All institute features use this.
- *  - `platform` connects as `lms_platform` (BYPASSRLS). Only auth, platform-admin and
- *    webhook code may use it, and it must always filter by institute explicitly.
+ *  - `platform` connects as `lms_platform`, which a policy lets see every institute. Only auth,
+ *    platform-admin and webhook code may use it, and it must always filter by institute explicitly.
  */
 @Injectable()
 export class PrismaService implements OnModuleDestroy {

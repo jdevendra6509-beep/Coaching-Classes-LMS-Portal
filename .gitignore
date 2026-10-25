@@ -12,3 +12,8 @@ coverage/
 .storage/
 *.tsbuildinfo
 next-env.d.ts
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

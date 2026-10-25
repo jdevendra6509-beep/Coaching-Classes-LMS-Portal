@@ -53,7 +53,8 @@ docker-compose.yml   Postgres, Redis, MinIO, Mailpit for local dev
 - **Row-level security** (`packages/db/prisma/sql/rls.sql`): the API connects as
   `lms_app`, which only sees rows whose `instituteId` equals the transaction-local
   `app.institute_id`. With no context set, tenant tables return nothing. Platform-admin
-  screens and webhooks use a separate `lms_platform` role behind platform-only routes.
+  screens and webhooks use a separate `lms_platform` role behind platform-only routes; it
+  reaches every institute through an explicit policy, not BYPASSRLS (which RDS doesn't grant).
 - Verified locally: no context → 0 rows; institute A sees only A; writing a B row while
   acting as A fails; context does not survive the transaction; cross-tenant FK rejected.
 - A `tests/tenant-isolation` suite will hit every endpoint as institute A asking for B's
@@ -142,7 +143,7 @@ privacy lawyer before onboarding paying institutes.
 | **M3 LMS** ✅ | Direct-to-storage uploads with signed tickets, modules and ordering, publish/unpublish, links and videos, short-lived download links for enrolled students, storage quota. Remaining: malware scanning (bucket setting), video provider. |
 | **M4 Fees & accounts** ✅ | Invoices with discounts, GST and instalments, receipts and reversals, AP (vendors, bills), double-entry ledger with DB-enforced balance and append-only journals, reports, invoice/receipt PDFs. Remaining: CGST/SGST split, period locking. |
 | **M5 Certificates** ✅ | Drag-and-drop layout editor over the institute's own artwork, automatic issue on completion + fees paid, PDF emailed to student and guardian, public QR verification page, revocation. Remaining: custom fonts for Indian scripts. |
-| **M6 Hardening & launch** | Browser end-to-end tests in CI, load test, backups/restore drill, Terraform for AWS Mumbai, monitoring (Sentry + CloudWatch), background job worker (email queue, renewals). |
+| **M6 Hardening & launch** | Done: Docker images, Terraform for AWS Mumbai (VPC, ALB + WAF, ECS Fargate, RDS with TLS and backups, S3, SES, Secrets Manager, CloudWatch alarms, 180-day logs), OIDC deploy pipeline with a migration step, [runbook](DEPLOYMENT.md). Remaining: browser end-to-end tests in CI, load test, restore drill, error tracking (Sentry), background job worker (email queue, renewals). |
 
 ## 8. Decisions
 

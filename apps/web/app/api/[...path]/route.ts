@@ -17,7 +17,9 @@ async function forward(request: NextRequest, { params }: { params: Promise<{ pat
   }
   const slug = slugFromHost(request.headers.get("host"));
   if (slug) headers.set("x-institute-slug", slug);
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  // The load balancer appends the address it saw to X-Forwarded-For, so the last entry is the
+  // real client; earlier entries come from the client and can be forged. The API rate-limits on it.
+  const ip = request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim();
   if (ip) headers.set("x-forwarded-for", ip);
 
   const hasBody = !["GET", "HEAD"].includes(request.method);
