@@ -1,4 +1,6 @@
-export const API_URL = process.env.API_URL ?? "http://localhost:4000";
+// A bare "host:port" (how Render hands out private-network addresses) means plain HTTP.
+const apiUrl = process.env.API_URL ?? "http://localhost:4000";
+export const API_URL = /^https?:\/\//.test(apiUrl) ? apiUrl : `http://${apiUrl}`;
 export const PLATFORM_HOST = process.env.PLATFORM_HOST ?? "localhost";
 
 const RESERVED = new Set(["www", "api", "app", "admin", "platform", "mail", "static", "assets", "cdn", "help", "support", "status", "docs"]);

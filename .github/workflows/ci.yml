@@ -27,6 +27,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @lms/db validate
+      - name: Supabase setup script matches the migrations
+        run: pnpm --filter @lms/db build:supabase-sql && git diff --exit-code packages/db/supabase/setup.sql
       - run: pnpm --filter @lms/api typecheck
       - run: pnpm --filter @lms/api build
       # Recreates lms_test from the migrations, applies RLS, then runs unit + e2e suites.

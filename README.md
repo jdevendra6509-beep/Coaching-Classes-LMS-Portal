@@ -7,7 +7,8 @@ teachers, courses, attendance, LMS content, fees & full accounts, and certificat
 - Data model: [packages/db/prisma/schema.prisma](packages/db/prisma/schema.prisma)
 - API: [apps/api](apps/api) (NestJS 12, ESM). OpenAPI UI at `/docs` outside production.
 - Web: [apps/web](apps/web) (Next.js 16, React 19, Tailwind 4). One app serves the platform site and every institute subdomain.
-- Hosting: AWS Mumbai (ECS Fargate, RDS, S3, SES) via Terraform in [infrastructure/terraform](infrastructure/terraform); runbook in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- Demo hosting: Supabase (Postgres + storage) and Render, from [render.yaml](render.yaml); guide in [docs/DEMO.md](docs/DEMO.md).
+- Production hosting (later): AWS Mumbai (ECS Fargate, RDS, S3, SES) via Terraform in [infrastructure/terraform](infrastructure/terraform); runbook in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Local setup
 

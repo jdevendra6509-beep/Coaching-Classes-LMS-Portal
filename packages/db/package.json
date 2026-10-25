@@ -8,6 +8,7 @@
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "node scripts/migrate.mjs",
+    "build:supabase-sql": "node scripts/build-supabase-sql.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {

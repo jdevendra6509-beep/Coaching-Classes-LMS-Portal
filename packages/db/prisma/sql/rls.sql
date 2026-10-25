@@ -57,3 +57,22 @@ END $$;
 -- The ledger is append-only for the application: mistakes are corrected with reversing
 -- entries, never by editing history. (The balance rules themselves live in a migration.)
 REVOKE UPDATE, DELETE ON "JournalEntry", "JournalLine" FROM lms_app;
+
+-- Supabase publishes the public schema over its REST API to the `anon` and `authenticated`
+-- roles (the anon key ships in browsers) and grants them every new table by default. This app
+-- never uses that API: take all access away, including on tables without RLS such as "User".
+-- No-op on plain Postgres and RDS, where these roles don't exist.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %I', r);
+      EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %I', r);
+      EXECUTE format('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM %I', r);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM %I', r);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM %I', r);
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM %I', r);
+    END IF;
+  END LOOP;
+END $$;
